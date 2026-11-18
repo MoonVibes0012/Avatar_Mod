@@ -1,28 +1,32 @@
 # VTuber Forge
 
-Mobile-first, offline Android avatar editor. The editor is bundled in the APK and requires no network at runtime.
+Editor avatar Android offline yang mengutamakan perangkat seluler. Editor ini dibundel di dalam APK dan tidak memerlukan jaringan saat dijalankan.
 
-## Implemented
-- Parametric per-part anatomy editor: height, width, depth, volume, muscle/soft-tissue shaping, region tags, and reset controls.
-- Detailed editable base anatomy: torso, chest, pelvis, neck, head, ears, eyes, nose, mouth, hair, upper/lower arms, hands, fingers, thighs, calves, feet, and toes.
-- WebGL 3D viewport with touch orbit/zoom and tap selection
-- Procedural avatar parts and primitives
-- Object transforms and material controls
-- Vertex mode with per-vertex editing
-- Bone hierarchy / IK target state and expression controls
-- Timeline/keyframe state
-- Offline autosave to local device storage
-- `.vforge.json` project save/load
-- OBJ export
-- GLB export
-- GLB/VRM binary import for mesh geometry
-- VRM 1.0 binary export with humanoid metadata, expressions, first-person/look-at metadata and spring-bone extension scaffolding
+## Diimplementasikan
 
-## APK build
-GitHub Actions builds `app-debug.apk` on push or manual dispatch. The workflow installs Android SDK 35 and Gradle 8.10, then uploads the APK as `vtuber-forge-debug-apk`.
+- Editor anatomi per-bagian parametrik: tinggi, lebar, kedalaman, volume, pembentukan otot/jaringan lunak, tag wilayah, dan kontrol reset.
+- Anatomi dasar yang dapat diedit secara detail: dada, payudara, panggul, leher, kepala, telinga, mata, hidung, mulut, rambut, lengan atas/bawah, tangan, jari-jari, paha, betis, kaki, dan jari kaki.
+- Viewport 3D WebGL dengan orbit/zoom sentuh dan pemilihan ketuk
+- Bagian avatar prosedural dan primitif
+- Transformasi objek dan kontrol material
+- Mode verteks dengan pengeditan per-verteks
+- Hierarki tulang / status target IK dan kontrol ekspresi
+- Status garis waktu/keyframe
+- Penyimpanan otomatis offline ke penyimpanan lokal perangkat
+- Simpan/muat proyek `.vforge.json`
+- Ekspor OBJ
+- Ekspor GLB
+- Impor biner GLB/VRM untuk geometri mesh
+- Ekspor biner VRM 1.0 dengan metadata humanoid, ekspresi, metadata orang-pertama/lihat-dan ekstensi spring-bone
+
+## Build APK
+
+GitHub Actions membangun `app-debug.apk` saat push atau dispatch manual. Alur kerja ini menginstal Android SDK 35 dan Gradle 8.10, lalu mengunggah APK sebagai `vtuber-forge-debug-apk`.
 
 ## Runtime
-No CDN, web server, account, or network connection is required by the editor.
 
-## Important format note
-VRM export is generated locally as a VRM 1.0 glTF binary with humanoid metadata. Complex externally authored VRM assets may contain skinning, morph, texture, MToon, and spring data that the lightweight editor does not yet preserve on round-trip import.
+Tidak ada CDN, server web, akun, atau koneksi jaringan yang diperlukan oleh editor.
+
+## Catatan penting tentang format
+
+Ekspor VRM dihasilkan secara lokal sebagai biner glTF VRM 1.0 dengan metadata humanoid. Aset VRM kompleks yang dibuat secara eksternal mungkin berisi data skinning, morph, tekstur, MToon, dan spring yang belum dipertahankan oleh editor ringan ini saat impor bolak-balik.
