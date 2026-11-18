@@ -11,7 +11,7 @@ const app = new pc.Application(canvas, {
     graphicsDeviceOptions: { antialias: false, alpha: false, preserveDrawingBuffer: false }
 });
 
-app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW); 
+app.setCanvasFillMode(pc.FILLMODE_FILL_PARENT);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
 app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, 2.0);
 app.graphicsDevice.precision = 'highp';
