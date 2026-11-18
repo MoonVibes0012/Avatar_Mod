@@ -23,7 +23,9 @@ function cloneMesh(mesh) {
     return newMesh;
 }
 
-$('dup').onclick = () => {
+// === PERBAIKAN: Tambahkan pengecekan if ($) agar tidak crash jika tombol tidak ada di HTML ===
+
+if ($('dup')) $('dup').onclick = () => {
     if (!S.selected) return alert("Pilih objek dulu!");
     const renderComp = S.selected.findComponent('render');
     if (!renderComp || !renderComp.meshInstances) return;
@@ -92,7 +94,7 @@ $('dup').onclick = () => {
     selectObject(newEntity);
 };
 
-$('del').onclick = () => {
+if ($('del')) $('del').onclick = () => {
     if (S.selected) {
         const toDelete = S.selected;
         selectObject(null);
@@ -106,20 +108,21 @@ $('del').onclick = () => {
     }
 };
 
-$('mirror').onclick = () => {
+if ($('mirror')) $('mirror').onclick = () => {
     if (!S.selected) return alert("Pilih objek dulu!");
     const p = S.selected.getPosition();
     S.selected.setPosition(-p.x, p.y, p.z);
     saveState();
 };
 
-$('center').onclick = () => {
+if ($('center')) $('center').onclick = () => {
     if (!S.selected) return alert("Pilih objek dulu!");
     S.selected.setPosition(0, 1, 0);
     saveState();
 };
 
-$('new').onclick = () => {
+// === PERBAIKAN UTAMA: Ganti $('new') menjadi $('btnNew') sesuai ID di app.html ===
+if ($('btnNew')) $('btnNew').onclick = () => {
     const hasSkin = typeof hasAnySkinnedEntity === 'function' ? hasAnySkinnedEntity() : false;
     const msg = hasSkin
         ? "⚠ PERINGATAN!\n\nScene berisi model skinned. Menghapus semua akan menghilangkan skeleton PERMANEN.\n\nLanjutkan?"
@@ -129,3 +132,5 @@ $('new').onclick = () => {
     meshCachePool.clear();
     S.objects = []; S.maxId = 1; undoStack = []; redoStack = []; resetMode(); selectObject(null);
 };
+
+dbg("=== operations.js DONE ===");
