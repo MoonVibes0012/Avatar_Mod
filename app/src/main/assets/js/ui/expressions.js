@@ -24,11 +24,14 @@ function findMorphIndex(name) {
     const lowerName = name.toLowerCase();
     let idx = S.selected._morphNames.findIndex(n => n.toLowerCase() === lowerName);
     if (idx >= 0) return idx;
+    
     idx = S.selected._morphNames.findIndex(n => n.toLowerCase().includes(lowerName));
     if (idx >= 0) return idx;
-    const normalized = lowerName.replace(/[_\s-]/g, '');
-    idx = S.selected._morphNames.findIndex(n =>
-        n.toLowerCase().replace(/[_\s-]/g, '').includes(normalized)
+    
+    // FIX: Pindahkan underscore (_) ke posisi aman dalam character class
+    const normalized = lowerName.replace(/[\s_-]/g, ''); 
+    idx = S.selected._morphNames.findIndex(n => 
+        n.toLowerCase().replace(/[\s_-]/g, '').includes(normalized)
     );
     return idx;
 }
@@ -143,14 +146,16 @@ if ($('exprSaveCustom')) {
         }
         const name = prompt("Nama expression custom:");
         if (!name || name.trim() === '') return;
-        const safeName = name.trim().replace(/[^a-zA-Z0-9_- ]/g, '');
-        if (safeName === '') return alert("Nama tidak valid!");
         
+        // FIX: Tambah spasi sebelum ] agar underscore tidak dianggap range
+        const safeName = name.trim().replace(/[^a-zA-Z0-9_ -]/g, ''); 
+        
+        if (safeName === '') return alert("Nama tidak valid!");
         const preset = {};
         S.selected._morphNames.forEach((morphName, idx) => {
             const weight = S.selected._morphInstance.getWeight(idx);
             if (weight > 0.01) {
-                const key = morphName.toLowerCase().replace(/[\s-]/g, '_');
+                const key = morphName.toLowerCase().replace(/[\s_-]/g, '_');
                 preset[key] = weight;
             }
         });
@@ -167,3 +172,4 @@ if ($('exprSaveCustom')) {
 }
 
 renderCustomExprList();
+dbg("✅ expressions.js loaded");
