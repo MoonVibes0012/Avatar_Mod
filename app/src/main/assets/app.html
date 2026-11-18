@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VTuber Forge</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Top Toolbar -->
+        <div class="top">
+            <div class="brand">VTuber Forge <span class="badge">v0.1</span></div>
+            <button id="btnUndo" title="Undo (Z)">↶</button>
+            <button id="btnRedo" title="Redo (Y)">↷</button>
+            <button id="btnSave" title="Save Scene">💾</button>
+            <button id="btnImport" title="Import GLB/VRM">📥</button>
+            <button id="btnScreenshot" title="Screenshot">📸</button>
+            <button id="parts" title="Menu Primitives & Avatar">☰ Menu</button>
+            <button id="inspector" title="Inspector Panel">⚙️ Inspect</button>
+            <button onclick="toggleDebug()" title="Debug Log">🐛</button>
+        </div>
+
+        <!-- Main Work Area -->
+        <div class="work">
+            <!-- Left Panel: Menu & Primitives -->
+            <div id="left" class="panel">
+                <div class="panel-header">
+                    <h3>MENU</h3>
+                    <button class="btn-close-panel" data-panel="left">✕ Tutup</button>
+                </div>
+                
+                <div class="section">
+                    <h3>Primitives</h3>
+                    <div class="grid">
+                        <button data-add="box">Cube</button>
+                        <button data-add="sphere">Sphere</button>
+                        <button data-add="cylinder">Cylinder</button>
+                        <button data-add="capsule">Capsule</button>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Avatar parts</h3>
+                    <div class="grid">
+                        <button data-add="body">Body</button>
+                        <button data-add="head">Head</button>
+                        <button data-add="eye">Eye</button>
+                        <button data-add="hair">Hair</button>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Scene</h3>
+                    <div class="field">
+                        <label><input type="checkbox" id="toggleGrid" checked> Show Grid / Floor</label>
+                    </div>
+                    <div class="field">
+                        <label>Background Color</label>
+                        <select id="bgColor">
+                            <option value="dark">Dark (Default)</option>
+                            <option value="light">Light (White)</option>
+                            <option value="green">Green Screen</option>
+                            <option value="blue">Blue Screen</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Performance</h3>
+                    <div class="field">
+                        <label>FPS Limit <span id="fpsOut">60</span></label>
+                        <input type="range" id="fpsLimit" min="30" max="120" value="60">
+                    </div>
+                    <div class="field">
+                        <label>Texture Quality <span id="texScaleOut">100</span>%</label>
+                        <input type="range" id="texScale" min="10" max="100" value="100">
+                    </div>
+                    <button id="screenshot" style="width:100%; margin-top:5px;">Take Screenshot</button>
+                </div>
+            </div>
+
+            <!-- Viewport -->
+            <div class="viewport">
+                <canvas id="gl"></canvas>
+                <div class="hud">
+                    <span id="mode">OBJECT</span>
+                    <span id="status">Ready.</span>
+                </div>
+            </div>
+
+            <!-- Right Panel: Inspector -->
+            <div id="right" class="panel right">
+                <div class="panel-header">
+                    <h3>INSPECTOR</h3>
+                    <button class="btn-close-panel" data-panel="right">✕ Tutup</button>
+                </div>
+
+                <div class="section">
+                    <h3>Object</h3>
+                    <div id="tree" class="tree"></div>
+                    <button id="focusBtn" style="width:100%; margin-top:5px;">🎯 Focus</button>
+                </div>
+
+                <div class="section">
+                    <h3>Transform</h3>
+                    <div class="grid">
+                        <div class="field"><label>X <span id="pxo">0</span></label><input type="number" id="px" step="0.1"></div>
+                        <div class="field"><label>Y <span id="pyo">1</span></label><input type="number" id="py" step="0.1"></div>
+                        <div class="field"><label>Z <span id="pzo">0</span></label><input type="number" id="pz" step="0.1"></div>
+                        <div class="field"><label>Scale <span id="sco">1</span></label><input type="number" id="sc" step="0.1"></div>
+                    </div>
+                    <h3>Rotation</h3>
+                    <div class="grid">
+                        <div class="field"><label>X <span id="rxo">0</span></label><input type="number" id="rx" step="1"></div>
+                        <div class="field"><label>Y <span id="ryo">0</span></label><input type="number" id="ry" step="1"></div>
+                        <div class="field"><label>Z <span id="rzo">0</span></label><input type="number" id="rz" step="1"></div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Tools</h3>
+                    <div class="toolrow">
+                        <button data-mode="object" class="on">Object</button>
+                        <button data-mode="vertex">Vertex</button>
+                        <button data-mode="bone">Bone</button>
+                    </div>
+                    <div class="grid" style="margin-top:5px;">
+                        <button id="dup">Duplicate</button>
+                        <button id="del">Delete</button>
+                        <button id="mirror">Mirror X</button>
+                        <button id="center">Center</button>
+                        <button id="smooth">Smooth Mesh</button>
+                        <button id="snapToggle">Grid Snap</button>
+                    </div>
+                </div>
+
+                <!-- Vertex Panel -->
+                <div id="vertexPanel" class="section" style="display:none;">
+                    <h3>Vertex Edit Mode</h3>
+                    <div class="field">
+                        <label>Vertex Index <span id="viO">0</span></label>
+                        <input type="range" id="vi" min="0" max="100" value="0">
+                    </div>
+                    <div class="grid">
+                        <div class="field"><label>Vert X <span id="vxo">0</span></label><input type="number" id="vx" step="0.01"></div>
+                        <div class="field"><label>Vert Y <span id="vyo">0</span></label><input type="number" id="vy" step="0.01"></div>
+                        <div class="field"><label>Vert Z <span id="vzo">0</span></label><input type="number" id="vz" step="0.01"></div>
+                    </div>
+                </div>
+
+                <!-- Bone Panel -->
+                <div id="bonePanel" class="section" style="display:none;">
+                    <h3>Bone Hierarchy (Preview)</h3>
+                    <select id="boneList" style="width:100%; margin-bottom:10px;"></select>
+                    <div id="boneEditControls" style="display:none;">
+                        <div class="grid">
+                            <div class="field"><label>Rot X <span id="bRxO">0</span></label><input type="range" id="bRx" min="-180" max="180"></div>
+                            <div class="field"><label>Rot Y <span id="bRyO">0</span></label><input type="range" id="bRy" min="-180" max="180"></div>
+                            <div class="field"><label>Rot Z <span id="bRzO">0</span></label><input type="range" id="bRz" min="-180" max="180"></div>
+                        </div>
+                        <div class="grid" style="margin-top:5px;">
+                            <button id="resetBone">Reset Bone</button>
+                            <button id="resetAllBones">Reset All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Animation Panel -->
+                <div id="animControls" class="section" style="display:none;">
+                    <h3>Animation Clip</h3>
+                    <select id="animSelect" style="width:100%; margin-bottom:5px;"></select>
+                    <div class="grid">
+                        <button id="animPlay">▶ Play</button>
+                        <button id="animPause">⏸ Pause</button>
+                        <button id="animStop">⏹ Stop</button>
+                    </div>
+                    <div class="grid" style="margin-top:5px;">
+                        <button id="animSpin">Auto-Spin</button>
+                        <button id="animPulse">Idle Pulse</button>
+                        <button id="animWobble">Spring Wobble</button>
+                    </div>
+                </div>
+
+                <!-- Morph/Expression Panel -->
+                <div id="morphSection" class="section" style="display:none;">
+                    <h3>Blendshapes (Morph)</h3>
+                    <div id="morphControls"></div>
+                </div>
+
+                <div id="expressionSection" class="section" style="display:none;">
+                    <h3>Expression Presets</h3>
+                    <div class="grid">
+                        <button class="expr-btn" data-expr="neutral">😌</button>
+                        <button class="expr-btn" data-expr="smile">😊</button>
+                        <button class="expr-btn" data-expr="laugh">😁</button>
+                        <button class="expr-btn" data-expr="surprise">😮</button>
+                        <button class="expr-btn" data-expr="angry">😠</button>
+                        <button class="expr-btn" data-expr="sad">😢</button>
+                        <button class="expr-btn" data-expr="wink_l">😉</button>
+                        <button class="expr-btn" data-expr="wink_r">😜</button>
+                        <button class="expr-btn" data-expr="shock">😲</button>
+                        <button class="expr-btn" data-expr="happy">😄</button>
+                        <button class="expr-btn" data-expr="cool">😎</button>
+                        <button class="expr-btn" data-expr="love">😍</button>
+                    </div>
+                    <div class="field" style="margin-top:10px;">
+                        <label>Intensity <span id="exprIntensityOut">1.00</span></label>
+                        <input type="range" id="exprIntensity" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <button id="exprSaveCustom" style="width:100%; margin-top:5px;">💾 Save Current as Custom</button>
+                    <div id="customExprList" style="margin-top:5px;"></div>
+                </div>
+
+                <div class="section">
+                    <h3>Material</h3>
+                    <div class="field">
+                        <label>Color</label>
+                        <input type="color" id="color" class="color" value="#9933cc">
+                    </div>
+                    <div class="field">
+                        <label>Gloss <span id="rougho">0.50</span></label>
+                        <input type="range" id="rough" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    <div class="field">
+                        <label>Metalness <span id="meto">0.00</span></label>
+                        <input type="range" id="metal" min="0" max="1" step="0.01" value="0">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Status Bar -->
+        <div class="status">
+            <span id="sel">Nothing selected</span>
+            <span style="margin-left:auto;">
+                <button id="undo" style="display:none;">Undo</button>
+                <button id="redo" style="display:none;">Redo</button>
+                <button id="save" style="display:none;">Save</button>
+                <button id="load" style="display:none;">Load</button>
+                <button id="import" style="display:none;">Import</button>
+                <button id="obj" style="display:none;">Export OBJ</button>
+                <button id="saveLogBtn" style="display:none;">Save Log</button>
+                <input type="file" id="file" accept=".glb,.vrm" style="display:none;">
+                <input type="file" id="jsonFile" accept=".json" style="display:none;">
+            </span>
+        </div>
+    </div>
+
+    <div id="debugOverlay"></div>
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <div id="loadingText">Memproses Model...</div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/playcanvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.4/dist/kalidokit.umd.js"></script>
+    
+    <script src="js/core/config.js"></script>
+    <script src="js/core/debug.js"></script>
+    <script src="js/core/init.js"></script>
+    
+    <script src="js/camera/controls.js"></script>
+    
+    <script src="js/entities/create.js"></script>
+    <script src="js/entities/select.js"></script>
+    <script src="js/entities/operations.js"></script>
+    
+    <script src="js/editing/vertex.js"></script>
+    <script src="js/editing/bone.js"></script>
+    <script src="js/editing/smooth.js"></script>
+    
+    <script src="js/io/export.js"></script>
+    <script src="js/io/import.js"></script>
+    <script src="js/io/save_load.js"></script>
+    
+    <script src="js/ui/toolbar.js"></script>
+    <script src="js/ui/expressions.js"></script>
+    
+    <script src="js/tracking/face.js"></script>
+    
+    <script src="js/scene/serialize.js"></script>
+</body>
+</html>
