@@ -1,7 +1,7 @@
 /* ===== VTuber Forge — js/ui/toolbar.js ===== */
 // Toolbar shortcuts, Input handlers, Panel controls, Animation UI
 
-dbg("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + window.devicePixelRatio + " screenW=" + screen.width + " ua=" + (navigator.userAgent.includes("Mobile") ? "mobile" : "desktop") + " mediaMatch=" + window.matchMedia('(max-width: 700px)').matches);
+dbg("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + window.devicePixelRatio + " ua=" + (navigator.userAgent.includes("Mobile") ? "mobile" : "desktop"));
 
 // === TOOLBAR SHORTCUT BINDINGS ===
 const btnUndo = $('btnUndo');
@@ -155,13 +155,9 @@ if ($('animSpin')) $('animSpin').onclick = () => { if (!S.selected) return alert
 if ($('animPulse')) $('animPulse').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animPulse = !S.selected._animPulse; saveState(); $('status').textContent = "Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"); };
 if ($('animWobble')) $('animWobble').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animWobble = !S.selected._animWobble; saveState(); $('status').textContent = "Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"); };
 
-// === PANEL CONTROLS (FIXED) ===
-// Visibilitas panel mobile SEPENUHNYA diatur oleh class .mobile-open.
-// Tidak ada lagi inline style 'display' yang bisa bikin panel "hilang permanen".
-
-function isMobileLayout() {
-    return window.matchMedia('(max-width: 700px)').matches;
-}
+// === PANEL CONTROLS ===
+// SELALU drawer mode — portrait maupun landscape.
+// Tidak ada lagi early-return untuk "desktop mode".
 
 function closeSidePanel(panelId) {
     const panel = document.getElementById(panelId);
@@ -175,20 +171,8 @@ function toggleSidePanel(panelId) {
     const panel = document.getElementById(panelId);
     if (!panel) { dbg("!!! ERROR: panel #" + panelId + " NOT FOUND"); return; }
 
-    // Self-heal: bersihkan inline display dari sesi lama / kode eksternal
+    // Self-heal: bersihkan inline display dari sesi lama
     panel.style.removeProperty('display');
-
-    if (!isMobileLayout()) {
-        // Desktop: panel selalu tampil via CSS grid. Tidak perlu apa-apa.
-        panel.scrollTop = 0;
-        const statusEl = document.getElementById('status');
-        if (statusEl) {
-            statusEl.textContent = panelId === 'left'
-                ? "Panel Menu aktif di sisi kiri."
-                : "Panel Inspector aktif di sisi kanan.";
-        }
-        return;
-    }
 
     const otherId = panelId === 'left' ? 'right' : 'left';
     const isOpen = panel.classList.contains('mobile-open');
@@ -229,26 +213,8 @@ function initPanelControls() {
             }
         });
     });
-
-    // Tap di area viewport (di luar panel) → tutup panel (mobile only)
-    const viewportEl = document.querySelector('.viewport');
-    if (viewportEl) {
-        viewportEl.addEventListener('pointerdown', () => {
-            if (!isMobileLayout()) return;
-            closeSidePanel('left');
-            closeSidePanel('right');
-        }, { passive: true });
-    }
 }
 initPanelControls();
-
-// Resize: jika user pindah dari mobile → desktop, bersihkan sisa class .mobile-open
-window.addEventListener('resize', () => {
-    if (!isMobileLayout()) {
-        document.getElementById('left')?.classList.remove('mobile-open');
-        document.getElementById('right')?.classList.remove('mobile-open');
-    }
-});
 
 // === GLOBAL ANIMATION CONTROLS ===
 if ($('animSelect')) $('animSelect').onchange = (e) => {
