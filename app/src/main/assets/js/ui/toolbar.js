@@ -16,6 +16,20 @@ if (btnSave) btnSave.onclick = () => { const b = $('save'); if (b) b.click(); };
 if (btnImport) btnImport.onclick = () => { const b = $('import'); if (b) b.click(); };
 if (btnScreenshot) btnScreenshot.onclick = () => { const b = $('screenshot'); if (b) b.click(); };
 
+// === MENU FILE: IMPORT + EXPORT VRM (x-vrm) ===
+if ($('importMenu')) $('importMenu').onclick = () => {
+    const b = $('import');
+    if (b) b.click();
+};
+
+if ($('x-vrm')) $('x-vrm').onclick = () => {
+    if (typeof exportVRM === 'function') {
+        exportVRM();
+    } else {
+        alert("Fungsi exportVRM tidak ditemukan.\n\nPastikan js/io/export.js ter-load dengan benar.");
+    }
+};
+
 // === INPUT HANDLERS ===
 document.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
@@ -34,15 +48,16 @@ window.addEventListener('keydown', (e) => {
 });
 
 let snapEnabled = false;
-$('snapToggle').onchange = (e) => {
+if ($('snapToggle')) $('snapToggle').onchange = (e) => {
     snapEnabled = e.target.checked;
     $('status').textContent = snapEnabled ? 'Grid Snap: ON (0.5 unit)' : 'Grid Snap: OFF';
 };
 const snapVal = (v) => snapEnabled ? Math.round(v * 2) / 2 : v;
 
-$('texScale').oninput = (e) => { $('texScaleOut').textContent = e.target.value; };
+if ($('texScale')) $('texScale').oninput = (e) => { $('texScaleOut').textContent = e.target.value; };
 
 const bind = (id, outId, fn) => {
+    if (!$(id)) return;
     $(id).oninput = () => {
         let raw = parseFloat($(id).value);
         if (!isFinite(raw)) raw = 0;
@@ -74,63 +89,71 @@ bind('rz', 'rzo', v => {
     if (S.selected._baseRot) S.selected._baseRot.z = v;
 });
 
-$('sc').oninput = () => {
-    let v = parseFloat($('sc').value);
-    if (!isFinite(v) || v === 0) v = 1;   // guard NaN & zero
-    $('sco').textContent = v.toFixed(2);
-    if (S.selected) S.selected.setLocalScale(v, v, v);
-};
-$('sc').onchange = saveState;
+if ($('sc')) {
+    $('sc').oninput = () => {
+        let v = parseFloat($('sc').value);
+        if (!isFinite(v) || v === 0) v = 1;
+        $('sco').textContent = v.toFixed(2);
+        if (S.selected) S.selected.setLocalScale(v, v, v);
+    };
+    $('sc').onchange = saveState;
+}
 
-$('color').oninput = (e) => {
-    if (!S.selected) return;
-    const hex = e.target.value;
-    const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
-    S.selected.findComponents('render').forEach(comp => {
-        comp.meshInstances.forEach(mi => {
-            if (mi.material) {
-                const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                mats.forEach(m => { if (m) { m.diffuse = new pc.Color(r, g, b); } });
-            }
+if ($('color')) {
+    $('color').oninput = (e) => {
+        if (!S.selected) return;
+        const hex = e.target.value;
+        const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+        S.selected.findComponents('render').forEach(comp => {
+            comp.meshInstances.forEach(mi => {
+                if (mi.material) {
+                    const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
+                    mats.forEach(m => { if (m) { m.diffuse = new pc.Color(r, g, b); } });
+                }
+            });
         });
-    });
-};
-$('color').onchange = () => {
-    if (!S.selected) return;
-    S.selected.findComponents('render').forEach(comp => {
-        comp.meshInstances.forEach(mi => {
-            if (mi.material) {
-                const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                mats.forEach(m => { if (m) m.update(); });
-            }
+    };
+    $('color').onchange = () => {
+        if (!S.selected) return;
+        S.selected.findComponents('render').forEach(comp => {
+            comp.meshInstances.forEach(mi => {
+                if (mi.material) {
+                    const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
+                    mats.forEach(m => { if (m) m.update(); });
+                }
+            });
         });
-    });
-    saveState();
-};
+        saveState();
+    };
+}
 
-$('rough').oninput = (e) => {
-    let v = parseFloat(e.target.value); $('rougho').textContent = v.toFixed(2);
-    if (S.selected) {
-        S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
-            if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.gloss = v; m.update(); } }); }
-        }));
-    }
-};
-$('rough').onchange = saveState;
+if ($('rough')) {
+    $('rough').oninput = (e) => {
+        let v = parseFloat(e.target.value); $('rougho').textContent = v.toFixed(2);
+        if (S.selected) {
+            S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
+                if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.gloss = v; m.update(); } }); }
+            }));
+        }
+    };
+    $('rough').onchange = saveState;
+}
 
-$('metal').oninput = (e) => {
-    let v = parseFloat(e.target.value); $('meto').textContent = v.toFixed(2);
-    if (S.selected) {
-        S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
-            if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.metalness = v; m.update(); } }); }
-        }));
-    }
-};
-$('metal').onchange = saveState;
+if ($('metal')) {
+    $('metal').oninput = (e) => {
+        let v = parseFloat(e.target.value); $('meto').textContent = v.toFixed(2);
+        if (S.selected) {
+            S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
+                if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.metalness = v; m.update(); } }); }
+            }));
+        }
+    };
+    $('metal').onchange = saveState;
+}
 
-$('animSpin').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animSpin = !S.selected._animSpin; saveState(); $('status').textContent = "Auto-Spin: " + (S.selected._animSpin ? "ON" : "OFF"); };
-$('animPulse').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animPulse = !S.selected._animPulse; saveState(); $('status').textContent = "Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"); };
-$('animWobble').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animWobble = !S.selected._animWobble; saveState(); $('status').textContent = "Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"); };
+if ($('animSpin')) $('animSpin').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animSpin = !S.selected._animSpin; saveState(); $('status').textContent = "Auto-Spin: " + (S.selected._animSpin ? "ON" : "OFF"); };
+if ($('animPulse')) $('animPulse').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animPulse = !S.selected._animPulse; saveState(); $('status').textContent = "Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"); };
+if ($('animWobble')) $('animWobble').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animWobble = !S.selected._animWobble; saveState(); $('status').textContent = "Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"); };
 
 // === PANEL CONTROLS (FIXED) ===
 // Visibilitas panel mobile SEPENUHNYA diatur oleh class .mobile-open.
@@ -144,7 +167,6 @@ function closeSidePanel(panelId) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
     panel.classList.remove('mobile-open');
-    // Bersihkan inline style jika ada sisa dari versi lama / kode eksternal
     panel.style.removeProperty('display');
 }
 window.closeSidePanel = closeSidePanel;
@@ -229,7 +251,7 @@ window.addEventListener('resize', () => {
 });
 
 // === GLOBAL ANIMATION CONTROLS ===
-$('animSelect').onchange = (e) => {
+if ($('animSelect')) $('animSelect').onchange = (e) => {
     if (!S.selected || !S.selected._animAssets) return;
     const idx = parseInt(e.target.value);
     if (isNaN(idx)) return;
@@ -241,19 +263,19 @@ $('animSelect').onchange = (e) => {
     $('status').textContent = "Animasi siap: " + S.selected._animNames[idx];
 };
 
-$('animPlay').onclick = () => {
+if ($('animPlay')) $('animPlay').onclick = () => {
     if (S.selected && S.selected.animation && S.selected.animation.asset) {
         S.selected.animation.play();
         $('status').textContent = "▶ Playing: " + S.selected.animation.asset.name;
     }
 };
-$('animPause').onclick = () => {
+if ($('animPause')) $('animPause').onclick = () => {
     if (S.selected && S.selected.animation) {
         S.selected.animation.pause();
         $('status').textContent = "⏸ Paused";
     }
 };
-$('animStop').onclick = () => {
+if ($('animStop')) $('animStop').onclick = () => {
     if (S.selected && S.selected.animation) {
         S.selected.animation.stop();
         $('status').textContent = "⏹ Stopped";
