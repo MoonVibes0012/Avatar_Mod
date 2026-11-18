@@ -96,6 +96,23 @@ function applyFaceBlendshapes(face) {
     }
 }
 
+function findMorphIndex(name) {
+    if (!S.selected || !S.selected._morphNames) return -1;
+    const lowerName = name.toLowerCase();
+    let idx = S.selected._morphNames.findIndex(n => n.toLowerCase() === lowerName);
+    if (idx >= 0) return idx;
+    
+    idx = S.selected._morphNames.findIndex(n => n.toLowerCase().includes(lowerName));
+    if (idx >= 0) return idx;
+    
+    // FIX: Pindahkan underscore (_) ke posisi aman dalam character class
+    const normalized = lowerName.replace(/[\s_-]/g, ''); 
+    idx = S.selected._morphNames.findIndex(n => 
+        n.toLowerCase().replace(/[\s_-]/g, '').includes(normalized)
+    );
+    return idx;
+}
+
 async function startFaceTracking() {
     if (isFaceTracking) { stopFaceTracking(); return; }
     if (!S.selected) return alert("Pilih model VRM/GLB dulu!");
@@ -129,7 +146,6 @@ async function startFaceTracking() {
         isFaceTracking = true;
         processFrame();
         
-        // Tombol face track biasanya ada di toolbar, jika ada:
         const btnFaceTrack = $('btnFaceTrack');
         if (btnFaceTrack) btnFaceTrack.classList.add('active');
         
@@ -151,7 +167,6 @@ function stopFaceTracking() {
     dbg("⏹ Face tracking stopped");
 }
 
-// Bind tombol face tracking jika ada di HTML
 const btnFaceTrack = $('btnFaceTrack');
 if (btnFaceTrack) btnFaceTrack.onclick = startFaceTracking;
 
