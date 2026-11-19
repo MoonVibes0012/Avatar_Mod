@@ -1,7 +1,8 @@
 /* ===== VTuber Forge — js/io/save_load.js ===== */
-// Serialize scene, Save/Load JSON, Undo/Redo logic
+// Scene Save/Load JSON, Undo/Redo, New Scene, dan Debug Log download
 
-const meshCachePool = new Map(); // name -> _meshCache
+const meshCachePool = new Map();
+window.meshCachePool = meshCachePool;
 
 function setSaveLoadStatus(msg) {
     const el = document.getElementById('status');
@@ -23,346 +24,401 @@ function showSaveLoadLoading(show, text) {
     if (ov) ov.style.display = show ? 'flex' : 'none';
 }
 
-function hasAnySkinnedEntity() {
-    return (S.objects || []).some(o => {
-        const render = o && typeof o.findComponent === 'function' ? o.findComponent('render') : null;
-        if (!render || !render.meshInstances) return false;
-        return render.meshInstances.some(mi => mi && mi.skinInstance != null);
-    });
-}
-window.hasAnySkinnedEntity = hasAnySkinnedEntity;
+function captureEntityMeshCache(entity) {
+    if (!entity || typeof entity.findComponents !== 'function') return [];
+    const renderComps = entity.findComponents('render');
+    if (!Array.isArray(renderComps)) return [];
 
-function stateHasSkeleton(stateStr) {
-    try {
-        const parsed = JSON.parse(stateStr);
-        return Array.isArray(parsed) && parsed.some(d => d && d.hasSkeleton === true);
-    } catch (e) {
-        return false;
-    }
+    const dataArr = [];
+    renderComps.forEach(comp => {
+        if (!comp || !Array.isArray(comp.meshInstances)) return;
+        comp.meshInstances.forEach(mi => {
+            if (!mi || !mi.mesh || mi.skinInstance != null) return;
+            const pos = mi.mesh.getPositions ? mi.mesh.getPositions() : null;
+            const idx = mi.mesh.getIndices ? mi.mesh.getIndices() : null;
+            const norms = mi.mesh.getNormals ? mi.mesh.getNormals() : null;
+            const uvs = mi.mesh.getUvs ? mi.mesh.getUvs() : null;
+            if (pos && idx && pos.length > 0 && idx.length > 0) {
+                dataArr.push({
+                    pos: Array.from(pos),
+                    idx: Array.from(idx),
+                    normals: norms ? Array.from(norms) : null,
+                    uvs: uvs ? Array.from(uvs) : null
+                });
+            }
+        });
+    });
+    return dataArr;
+}
+
+function ensureMeshCacheForEntities(objects) {
+    const list = Array.isArray(objects) ? objects : [];
+    list.forEach(obj => {
+        if (!obj) return;
+        if (!Array.isArray(obj._meshCache) || obj._meshCache.length === 0) {
+            const captured = captureEntityMeshCache(obj);
+            if (captured.length > 0) {
+                obj._meshCache = captured;
+            }
+        }
+        if (Array.isArray(obj._meshCache) && obj._meshCache.length > 0 && obj.name) {
+            meshCachePool.set(obj.name, obj._meshCache);
+        }
+    });
 }
 
 function serializeScene(includeMeshData = true) {
-    return JSON.stringify((S.objects || []).map(o => {
-        try {
-            if (!o || !o.getPosition) return null;
-            let meshDataArr = [];
-            if (includeMeshData && Array.isArray(o._meshCache) && o._meshCache.length > 0) {
-                meshDataArr = o._meshCache;
-            }
+    ensureMeshCacheForEntities(S.objects);
 
-            const safeVec = (v, def) => {
-                if (!v) return def;
-                if (typeof v.toArray === 'function') return v.toArray();
-                if (Array.isArray(v) && v.length >= 3) return v.slice(0, 3);
-                if (typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number') return [v.x, v.y, v.z];
-                return def;
-            };
+    if (window.SceneSerializer && typeof window.SceneSerializer.serializeSceneSnapshot === 'function') {
+        return window.SceneSerializer.serializeSceneSnapshot(S.objects, includeMeshData);
+    }
 
-            let _mat = o.render ? o.render.material : null;
-            if (Array.isArray(_mat)) _mat = _mat[0];
-            const _hasTex = !!(_mat && _mat.diffuseMap !== null && _mat.diffuseMap !== undefined);
-            const _col = _hasTex
-                ? [0.5, 0.5, 0.5]
-                : ((_mat && _mat.diffuse && typeof _mat.diffuse.toArray === 'function') ? _mat.diffuse.toArray() : [0.5, 0.5, 0.5]);
-
-            let objType = (o.render && o.render.type) ? o.render.type : 'box';
-            if (meshDataArr.length > 0) objType = 'custom';
-
-            const renderComps = typeof o.findComponents === 'function' ? o.findComponents('render') : [];
-            const hasSkeleton = renderComps.some(r =>
-                r && r.meshInstances && r.meshInstances.some(mi => mi && mi.skinInstance != null)
-            );
-
-            return {
-                name: o.name || 'Obj',
-                type: objType,
-                pos: safeVec(o.getPosition(), [0, 0, 0]),
-                rot: safeVec(o.getEulerAngles ? o.getEulerAngles() : null, [0, 0, 0]),
-                scale: safeVec(o.getLocalScale ? o.getLocalScale() : null, [1, 1, 1]),
-                color: _col,
-                hasTex: _hasTex,
-                hasSkeleton: hasSkeleton,
-                rough: (_mat && typeof _mat.gloss === 'number') ? _mat.gloss : 0.5,
-                metal: (_mat && typeof _mat.metalness === 'number') ? _mat.metalness : 0,
-                meshDataArr: meshDataArr,
-                hasMeshCache: !!(Array.isArray(o._meshCache) && o._meshCache.length > 0),
-                animSpin: !!(o._animSpin),
-                animPulse: !!(o._animPulse),
-                animWobble: !!(o._animWobble),
-                baseScale: safeVec(o._baseScale, null),
-                baseRot: safeVec(o._baseRot, null)
-            };
-        } catch (err) {
-            logSaveLoad("WARNING: Gagal serialize objek " + ((o && o.name) || '?') + " - " + err.message);
-            return null;
+    const data = [];
+    S.objects.forEach(obj => {
+        if (!obj) return;
+        let meshDataArr = [];
+        if (includeMeshData && Array.isArray(obj._meshCache) && obj._meshCache.length > 0) {
+            meshDataArr = obj._meshCache;
         }
-    }).filter(x => x !== null));
+
+        let mat = (obj.render && obj.render.material) ? obj.render.material : null;
+        if (Array.isArray(mat)) mat = mat[0];
+
+        const hasTex = !!(mat && mat.diffuseMap !== null && mat.diffuseMap !== undefined);
+        const colorArr = hasTex
+            ? [0.5, 0.5, 0.5]
+            : ((mat && mat.diffuse && typeof mat.diffuse.toArray === 'function') ? mat.diffuse.toArray() : [0.5, 0.5, 0.5]);
+
+        let objType = (obj.render && obj.render.type) ? obj.render.type : 'box';
+        if (meshDataArr.length > 0) objType = 'custom';
+
+        const pos = obj.getPosition();
+        const rot = obj.getEulerAngles();
+        const scale = obj.getLocalScale();
+
+        data.push({
+            name: obj.name || 'Obj',
+            type: objType,
+            pos: pos ? [pos.x, pos.y, pos.z] : [0, 0, 0],
+            rot: rot ? [rot.x, rot.y, rot.z] : [0, 0, 0],
+            scale: scale ? [scale.x, scale.y, scale.z] : [1, 1, 1],
+            color: colorArr,
+            hasTex: hasTex,
+            rough: (mat && typeof mat.gloss === 'number') ? mat.gloss : 0.5,
+            metal: (mat && typeof mat.metalness === 'number') ? mat.metalness : 0,
+            meshDataArr: meshDataArr,
+            hasMeshCache: !!(Array.isArray(obj._meshCache) && obj._meshCache.length > 0),
+            animSpin: !!(obj._animSpin),
+            animPulse: !!(obj._animPulse),
+            animWobble: !!(obj._animWobble),
+            baseScale: obj._baseScale ? [obj._baseScale.x, obj._baseScale.y, obj._baseScale.z] : null,
+            baseRot: obj._baseRot ? [obj._baseRot.x, obj._baseRot.y, obj._baseRot.z] : null
+        });
+    });
+
+    return JSON.stringify(data);
 }
-window.serializeScene = serializeScene;
 
 function saveState() {
-    const state = serializeScene(false);
-    if (undoStack.length > 0 && undoStack[undoStack.length - 1] === state) return;
-    undoStack.push(state);
-    if (undoStack.length > CONFIG.MAX_UNDO) undoStack.shift();
-    redoStack = [];
+    try {
+        ensureMeshCacheForEntities(S.objects);
+        const state = serializeScene(false);
+        undoStack.push(state);
+        if (undoStack.length > CONFIG.MAX_UNDO) {
+            undoStack.shift();
+        }
+        redoStack = [];
+    } catch (e) {
+        logSaveLoad("Save state error: " + e.message);
+    }
 }
 window.saveState = saveState;
 
-function buildMeshFromData(meshData, col, rough, metal) {
-    const mesh = new pc.Mesh(app.graphicsDevice);
-    if (meshData.pos) mesh.setPositions(new Float32Array(meshData.pos));
-    if (meshData.idx) {
-        if (meshData.idx.length > 65535) mesh.setIndices(new Uint32Array(meshData.idx));
-        else mesh.setIndices(new Uint16Array(meshData.idx));
-    }
-    if (meshData.uvs) mesh.setUvs(0, new Float32Array(meshData.uvs));
-    if (meshData.normals) mesh.setNormals(new Float32Array(meshData.normals));
-    else if (typeof mesh.calculateNormals === 'function') mesh.calculateNormals();
-    mesh.update(pc.PRIMITIVE_TRIANGLES);
+function loadState(stateStr, skipSaveState = false) {
+    try {
+        const data = (window.SceneSerializer && typeof window.SceneSerializer.parseSceneSnapshot === 'function')
+            ? window.SceneSerializer.parseSceneSnapshot(stateStr)
+            : JSON.parse(stateStr);
 
-    const m = new pc.StandardMaterial();
-    m.diffuse = new pc.Color(col[0], col[1], col[2]);
-    m.gloss = (typeof rough === 'number') ? rough : 0.5;
-    m.metalness = (typeof metal === 'number') ? metal : 0;
-    m.update();
-
-    const mi = new pc.MeshInstance(mesh, m);
-    if (typeof pc.BoundingBox !== 'undefined') {
-        mi.aabb = pc.BoundingBox.fromMesh(mesh);
-    }
-    return mi;
-}
-
-function loadState(stateStr) {
-    showSaveLoadLoading(true, "Memuat Scene...");
-
-    setTimeout(() => {
-        try {
-            (S.objects || []).forEach(o => {
-                if (typeof destroyEntity === 'function') destroyEntity(o);
-            });
-            S.objects = [];
-            S.maxId = 1;
-
-            const parsed = JSON.parse(stateStr);
-            if (!Array.isArray(parsed)) {
-                throw new Error("Format JSON bukan array.");
-            }
-
-            let maxFound = 1;
-            parsed.forEach(d => {
-                if (!d) return;
-                const m = String(d.name || '').match(/-(\d+)$/);
-                if (m) {
-                    const n = parseInt(m[1], 10);
-                    if (!isNaN(n) && n >= maxFound) maxFound = n + 1;
-                }
-            });
-            S.maxId = maxFound;
-
-            let skippedSkinned = 0;
-            let skippedMissingCache = 0;
-
-            parsed.forEach(d => {
-                if (!d) return;
-                try {
-                    const e = new pc.Entity(d.name || "Obj");
-                    const col = Array.isArray(d.color) && d.color.length >= 3 ? d.color : [0.5, 0.5, 0.5];
-
-                    if (Array.isArray(d.meshDataArr) && d.meshDataArr.length > 0) {
-                        e.addComponent('render', { type: 'asset', castShadows: false });
-                        const newMeshInstances = [];
-                        d.meshDataArr.forEach(meshData => {
-                            try {
-                                newMeshInstances.push(buildMeshFromData(meshData, col, d.rough, d.metal));
-                            } catch (me) {
-                                logSaveLoad("Load meshData fail: " + me.message);
-                            }
-                        });
-                        e.render.meshInstances = newMeshInstances;
-                        e._meshCache = d.meshDataArr;
-                        meshCachePool.set(e.name, d.meshDataArr);
-                    } else if (d.hasMeshCache && meshCachePool.has(d.name)) {
-                        e.addComponent('render', { type: 'asset', castShadows: false });
-                        const cached = meshCachePool.get(d.name);
-                        const newMeshInstances = [];
-                        cached.forEach(meshData => {
-                            try {
-                                newMeshInstances.push(buildMeshFromData(meshData, col, d.rough, d.metal));
-                            } catch (me) {
-                                logSaveLoad("Load from pool fail: " + me.message);
-                            }
-                        });
-                        e.render.meshInstances = newMeshInstances;
-                        e._meshCache = cached;
-                    } else if (d.hasMeshCache && !meshCachePool.has(d.name)) {
-                        logSaveLoad("⚠ Mesh cache hilang untuk " + d.name + " — fallback ke primitive");
-                        skippedMissingCache++;
-                        const fallbackType = (d.type === 'custom' || !['box', 'sphere', 'cylinder', 'capsule'].includes(d.type)) ? 'box' : d.type;
-                        e.addComponent('render', { type: fallbackType, castShadows: false });
-                        const m = new pc.StandardMaterial();
-                        m.diffuse = new pc.Color(col[0], col[1], col[2]);
-                        m.gloss = (typeof d.rough === 'number') ? d.rough : 0.5;
-                        m.metalness = (typeof d.metal === 'number') ? d.metal : 0;
-                        m.update();
-                        e.render.material = m;
-                    } else if (d.hasSkeleton) {
-                        logSaveLoad("⚠ Skinned entity di-skip (no cache): " + d.name);
-                        skippedSkinned++;
-                        return;
-                    } else if (['box', 'sphere', 'cylinder', 'capsule'].includes(d.type)) {
-                        e.addComponent('render', { type: d.type, castShadows: false });
-                        const m = new pc.StandardMaterial();
-                        m.diffuse = new pc.Color(col[0], col[1], col[2]);
-                        m.gloss = (typeof d.rough === 'number') ? d.rough : 0.5;
-                        m.metalness = (typeof d.metal === 'number') ? d.metal : 0;
-                        m.update();
-                        e.render.material = m;
-                    } else {
-                        e.addComponent('render', { type: 'box', castShadows: false });
-                        const m = new pc.StandardMaterial();
-                        m.diffuse = new pc.Color(col[0], col[1], col[2]);
-                        m.gloss = (typeof d.rough === 'number') ? d.rough : 0.5;
-                        m.metalness = (typeof d.metal === 'number') ? d.metal : 0;
-                        m.update();
-                        e.render.material = m;
-                    }
-
-                    const p = Array.isArray(d.pos) && d.pos.length >= 3 ? d.pos : [0, 0, 0];
-                    const r = Array.isArray(d.rot) && d.rot.length >= 3 ? d.rot : [0, 0, 0];
-                    const s = Array.isArray(d.scale) && d.scale.length >= 3 ? d.scale : [1, 1, 1];
-                    e.setPosition(p[0], p[1], p[2]);
-                    e.setEulerAngles(r[0], r[1], r[2]);
-                    e.setLocalScale(s[0], s[1], s[2]);
-
-                    e._animSpin = !!d.animSpin;
-                    e._animPulse = !!d.animPulse;
-                    e._animWobble = !!d.animWobble;
-                    e._baseScale = e.getLocalScale().clone();
-                    e._baseRot = e.getEulerAngles().clone();
-
-                    app.root.addChild(e);
-                    S.objects.push(e);
-                } catch (err) {
-                    logSaveLoad("Gagal load objek: " + err.message);
-                }
-            });
-
-            if (skippedSkinned > 0 || skippedMissingCache > 0) {
-                const partsMsg = [];
-                if (skippedSkinned > 0) partsMsg.push(skippedSkinned + " model skinned di-skip (perlu re-import)");
-                if (skippedMissingCache > 0) partsMsg.push(skippedMissingCache + " mesh cache hilang (fallback ke primitive)");
-                setSaveLoadStatus("⚠ " + partsMsg.join(" · "));
-            }
-
-            if (typeof resetMode === 'function') resetMode();
-            if (typeof selectObject === 'function') selectObject(null);
-        } catch (e) {
-            alert("JSON Invalid!");
-        } finally {
-            showSaveLoadLoading(false);
+        if (!Array.isArray(data)) {
+            throw new Error("Format state tidak valid.");
         }
-    }, 50);
+
+        const toRemove = S.objects.slice();
+        if (typeof selectObject === 'function') selectObject(null);
+        S.objects = [];
+        toRemove.forEach(o => {
+            if (!o) return;
+            if (typeof destroyEntity === 'function') {
+                destroyEntity(o);
+            } else {
+                try {
+                    o.enabled = false;
+                    if (o.parent) o.parent.removeChild(o);
+                    if (typeof o.destroy === 'function') o.destroy();
+                } catch (err) {}
+            }
+        });
+
+        data.forEach(d => {
+            if (!d) return;
+            const e = new pc.Entity(d.name || 'Obj');
+            let meshDataArr = Array.isArray(d.meshDataArr) ? d.meshDataArr : [];
+
+            if (meshDataArr.length === 0 && d.name && meshCachePool.has(d.name)) {
+                meshDataArr = meshCachePool.get(d.name);
+            }
+
+            if (meshDataArr.length > 0) {
+                e.addComponent('render', { type: 'asset', castShadows: false });
+                const mis = [];
+                meshDataArr.forEach(mData => {
+                    if (!mData || !Array.isArray(mData.pos) || !Array.isArray(mData.idx)) return;
+                    const mesh = new pc.Mesh(app.graphicsDevice);
+                    const posArr = new Float32Array(mData.pos);
+                    const idxArr = mData.idx.some(v => v > 65535)
+                        ? new Uint32Array(mData.idx)
+                        : new Uint16Array(mData.idx);
+                    mesh.setPositions(posArr);
+                    mesh.setIndices(idxArr);
+                    if (Array.isArray(mData.normals) && mData.normals.length > 0) {
+                        mesh.setNormals(new Float32Array(mData.normals));
+                    } else if (typeof mesh.calculateNormals === 'function') {
+                        mesh.calculateNormals();
+                    }
+                    if (Array.isArray(mData.uvs) && mData.uvs.length > 0) {
+                        mesh.setUvs(0, new Float32Array(mData.uvs));
+                    }
+                    mesh.update(pc.PRIMITIVE_TRIANGLES);
+
+                    const mat = new pc.StandardMaterial();
+                    const col = Array.isArray(d.color) ? d.color : [0.5, 0.5, 0.5];
+                    mat.diffuse = new pc.Color(col[0] ?? 0.5, col[1] ?? 0.5, col[2] ?? 0.5);
+                    if (typeof d.rough === 'number') mat.gloss = d.rough;
+                    if (typeof d.metal === 'number') mat.metalness = d.metal;
+                    if (typeof mat.update === 'function') mat.update();
+
+                    const mi = new pc.MeshInstance(mesh, mat);
+                    if (typeof pc.BoundingBox !== 'undefined') {
+                        mi.aabb = pc.BoundingBox.fromMesh(mesh);
+                    }
+                    mis.push(mi);
+                });
+                if (mis.length > 0) {
+                    e.render.meshInstances = mis;
+                } else {
+                    e.render.type = 'box';
+                }
+                e._meshCache = meshDataArr;
+                if (e.name) meshCachePool.set(e.name, meshDataArr);
+            } else {
+                const renderType = (d.type && d.type !== 'custom') ? d.type : 'box';
+                e.addComponent('render', { type: renderType, castShadows: false });
+                const m = new pc.StandardMaterial();
+                const col = Array.isArray(d.color) ? d.color : [0.5, 0.5, 0.5];
+                m.diffuse = new pc.Color(col[0] ?? 0.5, col[1] ?? 0.5, col[2] ?? 0.5);
+                if (typeof d.rough === 'number') m.gloss = d.rough;
+                if (typeof d.metal === 'number') m.metalness = d.metal;
+                if (typeof m.update === 'function') m.update();
+                e.render.material = m;
+            }
+
+            if (Array.isArray(d.pos) && d.pos.length >= 3) {
+                e.setPosition(Number(d.pos[0]) || 0, Number(d.pos[1]) || 0, Number(d.pos[2]) || 0);
+            }
+            if (Array.isArray(d.rot) && d.rot.length >= 3) {
+                e.setEulerAngles(Number(d.rot[0]) || 0, Number(d.rot[1]) || 0, Number(d.rot[2]) || 0);
+            }
+            if (Array.isArray(d.scale) && d.scale.length >= 3) {
+                e.setLocalScale(Number(d.scale[0]) || 1, Number(d.scale[1]) || 1, Number(d.scale[2]) || 1);
+            }
+
+            e._animSpin = !!d.animSpin;
+            e._animPulse = !!d.animPulse;
+            e._animWobble = !!d.animWobble;
+            e._baseScale = Array.isArray(d.baseScale) && d.baseScale.length >= 3
+                ? new pc.Vec3(Number(d.baseScale[0]) || 1, Number(d.baseScale[1]) || 1, Number(d.baseScale[2]) || 1)
+                : e.getLocalScale().clone();
+            e._baseRot = Array.isArray(d.baseRot) && d.baseRot.length >= 3
+                ? new pc.Vec3(Number(d.baseRot[0]) || 0, Number(d.baseRot[1]) || 0, Number(d.baseRot[2]) || 0)
+                : e.getEulerAngles().clone();
+
+            app.root.addChild(e);
+            S.objects.push(e);
+        });
+
+        if (typeof updateTree === 'function') updateTree();
+        if (S.objects.length > 0 && typeof selectObject === 'function') {
+            selectObject(S.objects[0]);
+        }
+        if (typeof window.syncMotionButtons === 'function') {
+            window.syncMotionButtons(S.selected);
+        }
+
+        if (!skipSaveState) {
+            saveState();
+        }
+    } catch (e) {
+        logSaveLoad("Load state error: " + e.message);
+        alert("Gagal load state: " + e.message);
+    }
 }
 window.loadState = loadState;
 
+function triggerUndo() {
+    if (undoStack.length <= 1) {
+        setSaveLoadStatus("Tidak ada lagi yang bisa di-Undo");
+        return;
+    }
+    const current = undoStack.pop();
+    redoStack.push(current);
+    const prev = undoStack[undoStack.length - 1];
+    loadState(prev, true);
+    setSaveLoadStatus("↶ Undo");
+}
+window.triggerUndo = triggerUndo;
+
+function triggerRedo() {
+    if (redoStack.length === 0) {
+        setSaveLoadStatus("Tidak ada lagi yang bisa di-Redo");
+        return;
+    }
+    const next = redoStack.pop();
+    undoStack.push(next);
+    loadState(next, true);
+    setSaveLoadStatus("↷ Redo");
+}
+window.triggerRedo = triggerRedo;
+
 function triggerSaveScene() {
-    if (typeof hasAnySkinnedEntity === 'function' && hasAnySkinnedEntity()) {
-        if (!confirm("⚠ PENTING!\n\nModel skinned TIDAK BISA disimpan (batasan engine).\nSetelah Save, model skinned akan HILANG dari file JSON.\nPrimitives & model statis tetap tersimpan normal.\n\nLanjutkan Save?")) return;
-    }
-    if (!confirm("PENTING: File JSON hanya menyimpan bentuk/warna, tekstur gambar akan HILANG (menjadi warna solid). Lanjutkan?")) return;
-
-    setSaveLoadStatus("Menyimpan...");
-    setTimeout(() => {
-        const dataStr = serializeScene(true);
-        if (dataStr.length > 10 * 1024 * 1024) {
-            setSaveLoadStatus("Gagal: Scene > 10 MB (batal disimpan).");
-            return alert("Scene > 10 MB! Gagal save.");
-        }
-        if (typeof downloadNative === 'function') {
-            downloadNative('vtuber_scene.json', dataStr, 'application/json');
-        }
-        setSaveLoadStatus("Saved!");
-    }, 100);
-}
-
-['btnSave', 'save'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.onclick = triggerSaveScene;
-});
-
-function loadSceneJsonText(jsonText) {
-    if (typeof hasAnySkinnedEntity === 'function' && hasAnySkinnedEntity()) {
-        if (!confirm("⚠ PENTING!\n\nModel skinned di scene akan HILANG setelah Load.\nFile JSON tidak menyimpan skeleton (batasan engine).\n\nLanjutkan?")) return;
-    }
     try {
-        JSON.parse(jsonText);
-        saveState();
-        loadState(jsonText);
-        undoStack = [serializeScene(false)];
-        redoStack = [];
-    } catch (err) {
-        alert("File JSON invalid.");
+        showSaveLoadLoading(true, "Menyimpan scene...");
+        setTimeout(() => {
+            try {
+                const jsonStr = serializeScene(true);
+                const fileName = 'vtuber_scene_' + Date.now() + '.json';
+
+                if (window.AndroidBridge && typeof window.AndroidBridge.downloadFile === 'function') {
+                    const base64 = btoa(unescape(encodeURIComponent(jsonStr)));
+                    window.AndroidBridge.downloadFile(fileName, base64, 'application/json');
+                } else {
+                    const blob = new Blob([jsonStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }
+                showSaveLoadLoading(false);
+                setSaveLoadStatus("💾 Scene disimpan: " + fileName);
+            } catch (err) {
+                showSaveLoadLoading(false);
+                alert("Gagal menyimpan scene: " + err.message);
+            }
+        }, 50);
+    } catch (e) {
+        showSaveLoadLoading(false);
+        alert("Gagal menyimpan scene: " + e.message);
     }
 }
-window.loadSceneJsonText = loadSceneJsonText;
+window.triggerSaveScene = triggerSaveScene;
 
 const jsonFileEl = document.getElementById('jsonFile');
 if (jsonFileEl) {
     jsonFileEl.onchange = (e) => {
-        const file = e.target.files && e.target.files[0];
+        const file = e.target && e.target.files ? e.target.files[0] : null;
         if (!file) return;
-        if (file.size > 10 * 1024 * 1024) { alert("File > 10MB!"); e.target.value = ''; return; }
+
+        showSaveLoadLoading(true, "Memuat scene...");
         const reader = new FileReader();
         reader.onload = (ev) => {
-            loadSceneJsonText(ev.target.result);
+            try {
+                const content = ev.target ? ev.target.result : '';
+                if (typeof content !== 'string' || !content.trim()) {
+                    throw new Error("File JSON kosong.");
+                }
+                loadState(content, false);
+                showSaveLoadLoading(false);
+                setSaveLoadStatus("✓ Scene dimuat: " + file.name);
+            } catch (err) {
+                showSaveLoadLoading(false);
+                alert("Gagal memuat scene JSON: " + err.message);
+            }
+            jsonFileEl.value = '';
+        };
+        reader.onerror = () => {
+            showSaveLoadLoading(false);
+            alert("Gagal membaca file JSON.");
+            jsonFileEl.value = '';
         };
         reader.readAsText(file);
-        e.target.value = '';
     };
 }
 
-const loadBtnEl = document.getElementById('load');
-if (loadBtnEl && jsonFileEl) loadBtnEl.onclick = () => jsonFileEl.click();
+function triggerNewScene() {
+    if (!confirm("Mulai scene baru? Semua objek saat ini akan dihapus.")) return;
 
-function triggerUndo() {
-    if (!Array.isArray(undoStack) || undoStack.length <= 1) return;
-    const targetState = undoStack[undoStack.length - 2];
-    const currentHasSkin = hasAnySkinnedEntity();
-    const targetHadSkin = stateHasSkeleton(targetState);
-
-    if (currentHasSkin || targetHadSkin) {
-        if (!confirm("⚠ PENTING!\n\nModel skinned akan HILANG dari scene setelah Undo (batasan engine).\nTidak bisa di-restore tanpa re-import file asli.\n\nLanjutkan?")) return;
+    if (typeof window.stopFaceTracking === 'function') {
+        try { window.stopFaceTracking(); } catch (e) {}
     }
 
-    redoStack.push(undoStack.pop());
-    loadState(undoStack[undoStack.length - 1]);
-    setSaveLoadStatus("Undo. Catatan: tekstur & skeleton tidak bisa di-restore.");
+    const toRemove = S.objects.slice();
+    if (typeof selectObject === 'function') selectObject(null);
+    S.objects = [];
+    toRemove.forEach(o => {
+        if (!o) return;
+        if (typeof destroyEntity === 'function') {
+            destroyEntity(o);
+        } else {
+            try {
+                o.enabled = false;
+                if (o.parent) o.parent.removeChild(o);
+                if (typeof o.destroy === 'function') o.destroy();
+            } catch (err) {}
+        }
+    });
+
+    undoStack = [];
+    redoStack = [];
+    meshCachePool.clear();
+    if (typeof updateTree === 'function') updateTree();
+    saveState();
+    setSaveLoadStatus("✨ Scene baru siap");
+}
+window.triggerNewScene = triggerNewScene;
+
+const btnNewEl = document.getElementById('btnNew');
+if (btnNewEl) btnNewEl.onclick = triggerNewScene;
+
+const saveLogBtnEl = document.getElementById('saveLogBtn');
+if (saveLogBtnEl) {
+    saveLogBtnEl.onclick = () => {
+        try {
+            const logText = Array.isArray(window.allLogs) ? window.allLogs.join('\n') : '';
+            const fileName = 'vtuber_debug_' + Date.now() + '.log';
+            if (window.AndroidBridge && typeof window.AndroidBridge.downloadFile === 'function') {
+                const base64 = btoa(unescape(encodeURIComponent(logText)));
+                window.AndroidBridge.downloadFile(fileName, base64, 'text/plain');
+            } else {
+                const blob = new Blob([logText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+            setSaveLoadStatus("📄 Debug log disimpan: " + fileName);
+        } catch (e) {
+            alert("Gagal menyimpan log: " + e.message);
+        }
+    };
 }
 
-function triggerRedo() {
-    if (!Array.isArray(redoStack) || redoStack.length === 0) return;
-    const targetState = redoStack[redoStack.length - 1];
-    const currentHasSkin = hasAnySkinnedEntity();
-    const targetHadSkin = stateHasSkeleton(targetState);
-
-    if (currentHasSkin || targetHadSkin) {
-        if (!confirm("⚠ PENTING!\n\nModel skinned akan HILANG dari scene setelah Redo (batasan engine).\nTidak bisa di-restore tanpa re-import file asli.\n\nLanjutkan?")) return;
-    }
-
-    const state = redoStack.pop();
-    undoStack.push(state);
-    loadState(state);
-    setSaveLoadStatus("Redo. Catatan: tekstur & skeleton tidak bisa di-restore.");
-}
-
-['btnUndo', 'undo'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.onclick = triggerUndo;
-});
-
-['btnRedo', 'redo'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.onclick = triggerRedo;
-});
+logSaveLoad("✅ save_load.js loaded");
