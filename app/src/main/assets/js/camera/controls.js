@@ -1,5 +1,6 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
 // Camera orbit, zoom, raycast, dan touch gestures
+// FIX: Bug seleksi objek — AABB stale, matrix invert gagal, threshold dinamis
 
 const tempVec = new pc.Vec3();
 let targetYaw = 0, targetPitch = -15, targetDist = 6;
@@ -7,15 +8,16 @@ let currentYaw = 0, currentPitch = -15, currentDist = 6;
 let targetPivotPos = new pc.Vec3(0, 1, 0);
 let currentPivotPos = new pc.Vec3(0, 1, 0);
 
+// ============================================================
+// CAMERA UPDATE (smooth interpolation)
+// ============================================================
 function updateCamera(dt) {
     const safeDt = Math.min(typeof dt === 'number' && isFinite(dt) && dt > 0 ? dt : 1 / 60, 0.05);
     const alpha = 1 - Math.exp(-10 * safeDt);
-    
     currentYaw = pc.math.lerp(currentYaw, targetYaw, alpha);
     currentPitch = pc.math.lerp(currentPitch, targetPitch, alpha);
     currentDist = pc.math.lerp(currentDist, targetDist, alpha);
     currentPivotPos.lerp(currentPivotPos, targetPivotPos, alpha);
-    
     pivot.setPosition(currentPivotPos);
     pivot.setLocalEulerAngles(currentPitch, currentYaw, 0);
     camera.setLocalPosition(0, 1.5, currentDist);
@@ -24,22 +26,21 @@ function updateCamera(dt) {
 window.zoomIn = function() { targetDist = Math.max(2, targetDist - 2); };
 window.zoomOut = function() { targetDist = Math.min(150, targetDist + 2); };
 
+// ============================================================
+// ANIMATION LOOP (spin, pulse, wobble)
+// ============================================================
 let time = 0;
 app.on('update', (dt) => {
-    updateCamera(dt); 
+    updateCamera(dt);
     time = (time + dt) % 1000;
-    
     S.objects.forEach(obj => {
         if (!obj || obj._destroyed) return;
-        
         if (obj._animSpin) obj.rotate(0, 90 * dt, 0);
-        
         if (obj._animPulse) {
             if (!obj._baseScale) obj._baseScale = obj.getLocalScale().clone();
             const sf = 1 + Math.sin(time * 4) * 0.05;
             obj.setLocalScale(obj._baseScale.x * sf, obj._baseScale.y * sf, obj._baseScale.z * sf);
         }
-        
         if (obj._animWobble) {
             if (!obj._baseRot) obj._baseRot = obj.getEulerAngles().clone();
             obj.setEulerAngles(obj._baseRot.x, obj._baseRot.y, obj._baseRot.z + Math.sin(time * 5) * 10);
@@ -47,7 +48,9 @@ app.on('update', (dt) => {
     });
 });
 
-// Raycasting
+// ============================================================
+// RAYCASTING SYSTEM (FIXED)
+// ============================================================
 let isDragging = false, prevX = 0, prevY = 0;
 let tapStartTime = 0, tapStartX = 0, tapStartY = 0;
 let initialPinchDist = 0, initialTargetDist = 6, wasPinching = false;
@@ -59,67 +62,156 @@ window.resetCameraGesture = function() {
     wasPinching = false;
 };
 
+/**
+ * RAYCAST UTAMA — dengan 2 metode fallback
+ * Method 1: AABB raycast di local space (akurat untuk mesh statis)
+ * Method 2: Screen-space distance (fallback untuk kasus edge)
+ */
 function doRaycast(x, y) {
-    if (!isAppReady) return;
+    if (!isAppReady || S.objects.length === 0) return;
     
     const rect = canvas.getBoundingClientRect();
     const tapX = x - rect.left;
     const tapY = y - rect.top;
     
-    const start = camera.camera.screenToWorld(tapX, tapY, camera.camera.nearClip);
-    const end = camera.camera.screenToWorld(tapX, tapY, camera.camera.farClip);
-    const ray = new pc.Ray(start, end.sub(start).normalize());
+    // Validasi koordinat
+    if (tapX < 0 || tapY < 0 || tapX > rect.width || tapY > rect.height) return;
     
-    let hit = null, minDist = Infinity;
+    let hit = null;
+    let minDist = Infinity;
     
-    S.objects.forEach(obj => {
-        const render = obj.findComponent('render');
-        if (!render || !render.meshInstances) return;
+    // === METHOD 1: AABB Raycast (dengan fix) ===
+    try {
+        const start = camera.camera.screenToWorld(tapX, tapY, camera.camera.nearClip);
+        const end = camera.camera.screenToWorld(tapX, tapY, camera.camera.farClip);
+        if (!start || !end) throw new Error("screenToWorld failed");
         
-        render.meshInstances.forEach(mi => {
-            if (!mi.mesh) return;
-            if (!mi.aabb || isNaN(mi.aabb.center.x)) {
-                try { mi.aabb = pc.BoundingBox.fromMesh(mi.mesh); } catch(e) { return; }
-            }
+        const dir = new pc.Vec3();
+        dir.sub2(end, start).normalize();
+        const ray = new pc.Ray(start, dir);
+        
+        const localInvMat = new pc.Mat4();
+        const localRayTemp = new pc.Ray();
+        const localIntersection = new pc.Vec3();
+        
+        for (const obj of S.objects) {
+            if (!obj || obj._destroyed) continue;
+            const render = obj.findComponent('render');
+            if (!render || !render.meshInstances) continue;
             
-            invMat.copy(obj.getWorldTransform());
-            invMat.invert();
-            invMat.transformPoint(ray.origin, localRay.origin);
-            invMat.transformVector(ray.direction, localRay.direction);
-            localRay.direction.normalize();
-            
-            if (mi.aabb.intersectsRay(localRay, intersection)) {
-                obj.getWorldTransform().transformPoint(intersection, intersection);
-                const dist = start.distance(intersection);
-                if (dist < minDist) { minDist = dist; hit = obj; }
+            for (const mi of render.meshInstances) {
+                if (!mi.mesh) continue;
+                
+                try {
+                    // FIX: Recompute AABB jika belum ada atau invalid
+                    if (!mi.aabb || isNaN(mi.aabb.center.x)) {
+                        try {
+                            mi.aabb = pc.BoundingBox.fromMesh(mi.mesh);
+                        } catch(e) {
+                            continue;
+                        }
+                    }
+                    
+                    // Transform ray ke local space
+                    const worldMat = obj.getWorldTransform();
+                    localInvMat.copy(worldMat);
+                    
+                    // FIX: Cek apakah invert berhasil
+                    if (!localInvMat.invert()) {
+                        dbg("⚠ Matrix invert gagal untuk " + obj.name);
+                        continue;
+                    }
+                    
+                    // Cek apakah matrix valid (tidak NaN)
+                    if (isNaN(localInvMat.data[0])) continue;
+                    
+                    localInvMat.transformPoint(ray.origin, localRayTemp.origin);
+                    localInvMat.transformVector(ray.direction, localRayTemp.direction);
+                    localRayTemp.direction.normalize();
+                    
+                    // Test intersection
+                    if (mi.aabb.intersectsRay(localRayTemp, localIntersection)) {
+                        // Transform intersection kembali ke world space
+                        worldMat.transformPoint(localIntersection, localIntersection);
+                        const dist = start.distance(localIntersection);
+                        
+                        if (dist < minDist && dist >= 0) {
+                            minDist = dist;
+                            hit = obj;
+                        }
+                    }
+                } catch (meshErr) {
+                    // Skip mesh ini, coba yang lain
+                    continue;
+                }
             }
-        });
-    });
-    
-    if (!hit) {
-        let minScreenDist = CONFIG.TAP_THRESHOLD;
-        S.objects.forEach(obj => {
-            const mi = obj.findComponent('render')?.meshInstances[0];
-            let centerPos = obj.getPosition();
-            if (mi && mi.aabb) {
-                obj.getWorldTransform().transformPoint(mi.aabb.center, tempVec);
-                centerPos = tempVec;
-            }
-            const screenPos = camera.camera.worldToScreen(centerPos);
-            const d = Math.hypot(screenPos.x - tapX, screenPos.y - tapY);
-            if (d < minScreenDist) { minScreenDist = d; hit = obj; }
-        });
+        }
+    } catch (e) {
+        dbg("Raycast method 1 failed: " + e.message);
     }
     
+    // === METHOD 2: Screen-space fallback (lebih robust) ===
+    if (!hit) {
+        let minScreenDist = CONFIG.TAP_THRESHOLD;
+        
+        for (const obj of S.objects) {
+            if (!obj || obj._destroyed) continue;
+            try {
+                const mi = obj.findComponent('render')?.meshInstances[0];
+                let worldCenter = obj.getPosition().clone();
+                
+                // Gunakan center AABB di world space jika ada
+                if (mi && mi.aabb) {
+                    const worldMat = obj.getWorldTransform();
+                    worldCenter = new pc.Vec3();
+                    worldMat.transformPoint(mi.aabb.center, worldCenter);
+                }
+                
+                const screenPos = camera.camera.worldToScreen(worldCenter);
+                if (!screenPos) continue;
+                
+                const d = Math.hypot(screenPos.x - tapX, screenPos.y - tapY);
+                
+                // FIX: Threshold dinamis berdasarkan ukuran objek di screen
+                let threshold = CONFIG.TAP_THRESHOLD;
+                if (mi && mi.aabb) {
+                    const extent = mi.aabb.halfExtents.length();
+                    const scale = obj.getWorldTransform().getScale();
+                    const maxScale = Math.max(scale.x, scale.y, scale.z);
+                    const worldSize = extent * maxScale;
+                    
+                    // Proyeksi ukuran ke screen
+                    const distToCam = worldCenter.distance(camera.getPosition());
+                    if (distToCam > 0.1) {
+                        const fov = camera.camera.fov * Math.PI / 180;
+                        const screenSize = (worldSize / (distToCam * Math.tan(fov / 2))) * rect.height * 0.5;
+                        threshold = Math.max(30, Math.min(200, screenSize * 0.7));
+                    }
+                }
+                
+                if (d < threshold && d < minScreenDist) {
+                    minScreenDist = d;
+                    hit = obj;
+                }
+            } catch (objErr) {
+                continue;
+            }
+        }
+    }
+    
+    // === APPLY SELECTION ===
     if (hit) {
         selectObject(hit);
-        $('status').textContent = "Terpilih: " + hit.name;
+        $('status').textContent = "✓ Terpilih: " + hit.name;
     } else {
         selectObject(null);
+        $('status').textContent = "Tidak ada objek di posisi tap";
     }
 }
 
-// Mouse events
+// ============================================================
+// MOUSE EVENTS
+// ============================================================
 canvas.addEventListener('mousedown', (e) => {
     isDragging = true;
     prevX = e.clientX; prevY = e.clientY;
@@ -130,7 +222,7 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
     if (isDragging) {
         isDragging = false;
-        if (performance.now() - tapStartTime < 500 && 
+        if (performance.now() - tapStartTime < 500 &&
             Math.hypot(e.clientX - tapStartX, e.clientY - tapStartY) < 30) {
             doRaycast(e.clientX, e.clientY);
         }
@@ -151,7 +243,9 @@ canvas.addEventListener('wheel', (e) => {
     targetDist = Math.max(2, Math.min(150, targetDist));
 }, { passive: false });
 
-// Touch events
+// ============================================================
+// TOUCH EVENTS
+// ============================================================
 let EDGE_DEAD_ZONE = window.innerWidth > 400 ? 18 : 14;
 window.addEventListener('resize', () => {
     EDGE_DEAD_ZONE = window.innerWidth > 400 ? 18 : 14;
@@ -160,9 +254,8 @@ window.addEventListener('resize', () => {
 canvas.addEventListener('touchstart', (e) => {
     if (e.touches.length > 2) return;
     if (e.touches[0].radiusX && e.touches[0].radiusX > 40) return;
-    if (e.touches[0].clientX < EDGE_DEAD_ZONE || 
+    if (e.touches[0].clientX < EDGE_DEAD_ZONE ||
         e.touches[0].clientX > window.innerWidth - EDGE_DEAD_ZONE) return;
-    
     e.stopPropagation(); e.preventDefault();
     
     if (e.touches.length === 1) {
@@ -207,7 +300,7 @@ canvas.addEventListener('touchend', (e) => {
     e.stopPropagation();
     if (!wasPinching && e.changedTouches.length === 1) {
         const t = e.changedTouches[0];
-        if (performance.now() - tapStartTime < 500 && 
+        if (performance.now() - tapStartTime < 500 &&
             Math.hypot(t.clientX - tapStartX, t.clientY - tapStartY) < 30) {
             doRaycast(t.clientX, t.clientY);
         }
@@ -228,7 +321,9 @@ canvas.addEventListener('touchcancel', () => {
     window.resetCameraGesture();
 });
 
-// Focus button
+// ============================================================
+// FOCUS BUTTON
+// ============================================================
 $('focusBtn').onclick = () => {
     if (!S.selected) return alert("Pilih objek dulu!");
     try {
@@ -254,3 +349,5 @@ $('focusBtn').onclick = () => {
         targetPivotPos.set(p.x, p.y, p.z);
     }
 };
+
+dbg("✅ controls.js loaded (with raycast fixes)");
