@@ -1,51 +1,82 @@
 /* ===== VTuber Forge — js/core/init.js ===== */
-// Inisialisasi aplikasi, canvas, dan scene dasar
+// Inisialisasi aplikasi, canvas, scene dasar, dan render loop
 
 let isAppReady = false;
 
+function setStatusText(msg) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = msg;
+}
+
+function logInit(msg) {
+    if (typeof window.dbg === 'function') {
+        try { window.dbg(msg); } catch (e) {}
+    } else if (typeof console !== 'undefined') {
+        console.log(msg);
+    }
+}
+
 // Canvas & App initialization
 const canvas = document.getElementById('gl');
+if (!canvas) {
+    throw new Error("Canvas #gl tidak ditemukan di dokumen.");
+}
+
 const app = new pc.Application(canvas, {
     mouse: new pc.Mouse(canvas),
     touch: new pc.TouchDevice(canvas),
     graphicsDeviceOptions: { antialias: false, alpha: false, preserveDrawingBuffer: false }
 });
 
+window.app = app;
+
 app.setCanvasFillMode(pc.FILLMODE_FILL_PARENT);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
-app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio, 2.0);
+app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2.0);
 app.graphicsDevice.precision = 'highp';
+
+window.resetCameraGesture = function () {
+    if (window.CameraControls) {
+        window.CameraControls._dragging = false;
+        window.CameraControls._panning = false;
+        window.CameraControls._pinchDist = 0;
+        window.CameraControls._pinchMid = null;
+    }
+};
 
 let resizeTimeout;
 window.addEventListener("resize", () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
-        app.resizeCanvas();
-        app.render();
-        if (typeof window.resetCameraGesture === 'function') 
-            window.resetCameraGesture();
+        try {
+            if (typeof app.resizeCanvas === 'function') app.resizeCanvas();
+            if (typeof app.render === 'function') app.render();
+            if (typeof window.resetCameraGesture === 'function') window.resetCameraGesture();
+        } catch (e) {
+            logInit("Resize error: " + e.message);
+        }
     }, 200);
 });
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('webglcontextlost', function(event) { 
-    event.preventDefault(); 
-    alert("Memori Grafis Penuh! Memuat ulang..."); 
-    location.reload(); 
+canvas.addEventListener('webglcontextlost', function (event) {
+    event.preventDefault();
+    alert("Memori Grafis Penuh! Memuat ulang...");
+    location.reload();
 }, false);
 
 app.start();
 isAppReady = true;
 
 // Scene setup
-const pivot = new pc.Entity('cameraPivot'); 
+const pivot = new pc.Entity('cameraPivot');
 app.root.addChild(pivot);
 
 const camera = new pc.Entity('camera');
-camera.addComponent('camera', { 
-    clearColor: new pc.Color(0.03, 0.03, 0.04), 
-    farClip: 150, 
-    nearClip: 0.5 
+camera.addComponent('camera', {
+    clearColor: new pc.Color(0.03, 0.03, 0.04),
+    farClip: 150,
+    nearClip: 0.5
 });
 pivot.addChild(camera);
 
@@ -53,42 +84,54 @@ app.scene.ambientLight = new pc.Color(0.4, 0.4, 0.4);
 
 const light = new pc.Entity('light');
 light.addComponent('light', { type: 'directional', castShadows: false, intensity: 1.0 });
-light.setEulerAngles(45, 30, 0); 
+light.setEulerAngles(45, 30, 0);
 app.root.addChild(light);
 
 const fillLight = new pc.Entity('fillLight');
 fillLight.addComponent('light', { type: 'directional', intensity: 0.5 });
-fillLight.setEulerAngles(-45, -30, 0); 
+fillLight.setEulerAngles(-45, -30, 0);
 app.root.addChild(fillLight);
 
 const ground = new pc.Entity('ground');
 ground.addComponent('render', { type: 'plane' });
-const matG = new pc.StandardMaterial(); 
-matG.diffuse = new pc.Color(0.1, 0.1, 0.15); 
-matG.update(); 
+const matG = new pc.StandardMaterial();
+matG.diffuse = new pc.Color(0.1, 0.1, 0.15);
+matG.update();
 ground.render.material = matG;
-ground.setLocalScale(20, 1, 20); 
+ground.setLocalScale(20, 1, 20);
 app.root.addChild(ground);
 
-$('toggleGrid').onchange = (e) => { ground.enabled = e.target.checked; };
+const toggleGridEl = document.getElementById('toggleGrid');
+if (toggleGridEl) {
+    toggleGridEl.onchange = (e) => {
+        ground.enabled = !!e.target.checked;
+    };
+}
 
-$('bgColor').onchange = (e) => {
-    const v = e.target.value;
-    let c;
-    if (v === 'light') c = new pc.Color(1, 1, 1);
-    else if (v === 'green') c = new pc.Color(0, 1, 0);
-    else if (v === 'blue') c = new pc.Color(0, 0, 1);
-    else c = new pc.Color(0.03, 0.03, 0.04);
-    if (camera.camera) { camera.camera.clearColor = c; }
-    $('status').textContent = "Background: " + v;
-};
+const bgColorEl = document.getElementById('bgColor');
+if (bgColorEl) {
+    bgColorEl.onchange = (e) => {
+        const v = e.target.value;
+        let c;
+        if (v === 'light') c = new pc.Color(1, 1, 1);
+        else if (v === 'green') c = new pc.Color(0, 1, 0);
+        else if (v === 'blue') c = new pc.Color(0, 0, 1);
+        else c = new pc.Color(0.03, 0.03, 0.04);
+        if (camera.camera) {
+            camera.camera.clearColor = c;
+        }
+        setStatusText("Background: " + v);
+    };
+}
 
 // Memory management
-window.clearUndoStack = function() {
-    undoStack = [];
-    redoStack = [];
-    if (typeof meshCachePool !== 'undefined') meshCachePool.clear();
-    dbg("⚠ Undo/redo/meshCache cleared (low memory)");
+window.clearUndoStack = function () {
+    if (typeof undoStack !== 'undefined') undoStack = [];
+    if (typeof redoStack !== 'undefined') redoStack = [];
+    if (typeof meshCachePool !== 'undefined' && typeof meshCachePool.clear === 'function') {
+        meshCachePool.clear();
+    }
+    logInit("⚠ Undo/redo/meshCache cleared (low memory)");
 };
 
 // Render loop
@@ -103,25 +146,31 @@ function renderLoop(now) {
         dt = Math.min(dt, 0.1);
         if (dt === 0) dt = 0.016;
         lastFrameTime = now;
-        app.update(dt); 
+        app.update(dt);
         app.render();
     }
 }
 
 requestAnimationFrame(renderLoop);
 
-$('fpsLimit').oninput = (e) => { 
-    targetFPS = parseInt(e.target.value); 
-    $('fpsOut').textContent = targetFPS; 
-};
+const fpsLimitEl = document.getElementById('fpsLimit');
+if (fpsLimitEl) {
+    fpsLimitEl.oninput = (e) => {
+        const parsed = parseInt(e.target.value, 10);
+        targetFPS = isNaN(parsed) ? 60 : Math.max(10, Math.min(120, parsed));
+        const outEl = document.getElementById('fpsOut');
+        if (outEl) outEl.textContent = String(targetFPS);
+    };
+}
 
 document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { 
-        isRendering = false; 
-        $('loadingOverlay').style.display = 'none'; 
-    } else { 
-        isRendering = true; 
-        lastFrameTime = performance.now(); 
-        requestAnimationFrame(renderLoop); 
+    const loadingOv = document.getElementById('loadingOverlay');
+    if (document.hidden) {
+        isRendering = false;
+        if (loadingOv) loadingOv.style.display = 'none';
+    } else {
+        isRendering = true;
+        lastFrameTime = performance.now();
+        requestAnimationFrame(renderLoop);
     }
 });
