@@ -1,24 +1,70 @@
 /* ===== VTuber Forge — js/ui/toolbar.js ===== */
 // Toolbar shortcuts, Input handlers, Panel controls, Animation UI
 
-dbg("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + window.devicePixelRatio);
+function setToolbarStatus(msg) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = msg;
+}
+
+function logToolbar(msg) {
+    if (typeof window.dbg === 'function') {
+        try { window.dbg(msg); } catch (e) {}
+    } else if (typeof console !== 'undefined') {
+        console.log(msg);
+    }
+}
+
+function byId(id) {
+    return document.getElementById(id);
+}
+
+logToolbar("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + (window.devicePixelRatio || 1));
 
 // === TOOLBAR SHORTCUT BINDINGS ===
-if ($('btnUndo')) $('btnUndo').onclick = () => { const b = $('undo'); if (b) b.click(); };
-if ($('btnRedo')) $('btnRedo').onclick = () => { const b = $('redo'); if (b) b.click(); };
-if ($('btnSave')) $('btnSave').onclick = () => { const b = $('save'); if (b) b.click(); };
-if ($('btnImport')) $('btnImport').onclick = () => { const b = $('import'); if (b) b.click(); };
-if ($('btnScreenshot')) $('btnScreenshot').onclick = () => { const b = $('screenshot'); if (b) b.click(); };
+if (byId('btnUndo')) {
+    byId('btnUndo').onclick = () => {
+        if (typeof triggerUndo === 'function') triggerUndo();
+        else if (byId('undo')) byId('undo').click();
+    };
+}
+if (byId('btnRedo')) {
+    byId('btnRedo').onclick = () => {
+        if (typeof triggerRedo === 'function') triggerRedo();
+        else if (byId('redo')) byId('redo').click();
+    };
+}
+if (byId('btnSave')) {
+    byId('btnSave').onclick = () => {
+        if (typeof triggerSaveScene === 'function') triggerSaveScene();
+        else if (byId('save')) byId('save').click();
+    };
+}
+if (byId('btnImport')) {
+    byId('btnImport').onclick = () => {
+        const f = byId('file');
+        if (f) f.click();
+    };
+}
+if (byId('btnScreenshot')) {
+    byId('btnScreenshot').onclick = () => {
+        if (typeof takeScreenshot === 'function') takeScreenshot();
+        else if (byId('screenshot')) byId('screenshot').click();
+    };
+}
 
 // === MENU FILE: IMPORT + EXPORT VRM (x-vrm) ===
-if ($('importMenu')) $('importMenu').onclick = () => {
-    const b = $('import');
-    if (b) b.click();
-};
-if ($('x-vrm')) $('x-vrm').onclick = () => {
-    if (typeof exportVRM === 'function') exportVRM();
-    else alert("Fungsi exportVRM tidak ditemukan.\n\nPastikan js/io/export.js ter-load.");
-};
+if (byId('importMenu')) {
+    byId('importMenu').onclick = () => {
+        const f = byId('file');
+        if (f) f.click();
+    };
+}
+if (byId('x-vrm')) {
+    byId('x-vrm').onclick = () => {
+        if (typeof exportVRM === 'function') exportVRM();
+        else alert("Fungsi exportVRM tidak ditemukan.\n\nPastikan js/io/export.js ter-load.");
+    };
+}
 
 // === INPUT HANDLERS ===
 document.querySelectorAll('input').forEach(inp => {
@@ -26,164 +72,244 @@ document.querySelectorAll('input').forEach(inp => {
 });
 
 window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (!e.target || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if (e.repeat) return;
     if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z') { e.preventDefault(); $('undo').click(); }
-        if (e.key === 'y') { e.preventDefault(); $('redo').click(); }
+        if (e.key === 'z' || e.key === 'Z') {
+            e.preventDefault();
+            if (typeof triggerUndo === 'function') triggerUndo();
+        }
+        if (e.key === 'y' || e.key === 'Y') {
+            e.preventDefault();
+            if (typeof triggerRedo === 'function') triggerRedo();
+        }
     } else {
-        if (e.key === 'z' || e.key === 'Z') { $('undo').click(); }
-        if (e.key === 'y' || e.key === 'Y') { $('redo').click(); }
+        if (e.key === 'z' || e.key === 'Z') {
+            if (typeof triggerUndo === 'function') triggerUndo();
+        }
+        if (e.key === 'y' || e.key === 'Y') {
+            if (typeof triggerRedo === 'function') triggerRedo();
+        }
     }
 });
 
 let snapEnabled = false;
-if ($('snapToggle')) $('snapToggle').onchange = (e) => {
-    snapEnabled = e.target.checked;
-    $('status').textContent = snapEnabled ? 'Grid Snap: ON (0.5 unit)' : 'Grid Snap: OFF';
-};
+if (byId('snapToggle')) {
+    byId('snapToggle').onchange = (e) => {
+        snapEnabled = !!e.target.checked;
+        setToolbarStatus(snapEnabled ? 'Grid Snap: ON (0.5 unit)' : 'Grid Snap: OFF');
+    };
+}
 const snapVal = (v) => snapEnabled ? Math.round(v * 2) / 2 : v;
 
-if ($('texScale')) $('texScale').oninput = (e) => { $('texScaleOut').textContent = e.target.value; };
+if (byId('texScale')) {
+    byId('texScale').oninput = (e) => {
+        const out = byId('texScaleOut');
+        if (out) out.textContent = e.target.value;
+    };
+}
 
 // ============================================================
 // BIND: number input + slider geser + label (2 arah)
 // ============================================================
 const bind = (id, outId, fn, sliderId, sMin, sMax, decimals) => {
-    if (!$(id) || !$(outId)) return;
+    const numEl = byId(id);
+    const outEl = byId(outId);
+    if (!numEl || !outEl) return;
     if (decimals === undefined) decimals = 2;
 
     const apply = (v, fromSlider) => {
         if (!isFinite(v)) v = 0;
         if (fromSlider) v = Math.max(sMin, Math.min(sMax, v));
-        $(id).value = v;
-        if (sliderId && $(sliderId)) {
-            const clamped = Math.max(sMin, Math.min(sMax, v));
-            $(sliderId).value = clamped;
+        numEl.value = String(v);
+        const slEl = sliderId ? byId(sliderId) : null;
+        if (slEl) {
+            slEl.value = String(Math.max(sMin, Math.min(sMax, v)));
         }
-        $(outId).textContent = v.toFixed(decimals);
+        outEl.textContent = v.toFixed(decimals);
         if (S.selected) fn(v);
     };
 
-    $(id).oninput = () => {
-        let raw = parseFloat($(id).value);
+    numEl.oninput = () => {
+        let raw = parseFloat(numEl.value);
         if (!isFinite(raw)) raw = 0;
         apply(snapVal(raw), false);
     };
-    $(id).onchange = saveState;
+    numEl.onchange = () => { if (typeof saveState === 'function') saveState(); };
 
-    if (sliderId && $(sliderId)) {
-        $(sliderId).oninput = () => {
-            const v = parseFloat($(sliderId).value);
+    const slEl = sliderId ? byId(sliderId) : null;
+    if (slEl) {
+        slEl.oninput = () => {
+            const v = parseFloat(slEl.value);
             apply(snapVal(v), true);
         };
-        $(sliderId).onchange = saveState;
+        slEl.onchange = () => { if (typeof saveState === 'function') saveState(); };
     }
 };
 
-// Position (slider -10..10)
 bind('px', 'pxo', v => S.selected.setPosition(v, S.selected.getPosition().y, S.selected.getPosition().z), 'pxR', -10, 10, 2);
 bind('py', 'pyo', v => S.selected.setPosition(S.selected.getPosition().x, v, S.selected.getPosition().z), 'pyR', -10, 10, 2);
 bind('pz', 'pzo', v => S.selected.setPosition(S.selected.getPosition().x, S.selected.getPosition().y, v), 'pzR', -10, 10, 2);
 
-// Rotation (slider -180..180)
 bind('rx', 'rxo', v => {
-    S.selected._animSpin = false; S.selected._animWobble = false;
+    S.selected._animSpin = false;
+    S.selected._animWobble = false;
     S.selected.setEulerAngles(v, S.selected.getEulerAngles().y, S.selected.getEulerAngles().z);
     if (S.selected._baseRot) S.selected._baseRot.x = v;
 }, 'rxR', -180, 180, 0);
 bind('ry', 'ryo', v => {
-    S.selected._animSpin = false; S.selected._animWobble = false;
+    S.selected._animSpin = false;
+    S.selected._animWobble = false;
     S.selected.setEulerAngles(S.selected.getEulerAngles().x, v, S.selected.getEulerAngles().z);
     if (S.selected._baseRot) S.selected._baseRot.y = v;
 }, 'ryR', -180, 180, 0);
 bind('rz', 'rzo', v => {
-    S.selected._animSpin = false; S.selected._animWobble = false;
+    S.selected._animSpin = false;
+    S.selected._animWobble = false;
     S.selected.setEulerAngles(S.selected.getEulerAngles().x, S.selected.getEulerAngles().y, v);
     if (S.selected._baseRot) S.selected._baseRot.z = v;
 }, 'rzR', -180, 180, 0);
 
-// Scale (slider 0.1..5) — guard v<=0
-if ($('sc') && $('sco')) {
+if (byId('sc') && byId('sco')) {
+    const scEl = byId('sc');
+    const scOut = byId('sco');
+    const scREl = byId('scR');
     const applyScale = (v, fromSlider) => {
         if (!isFinite(v) || v <= 0) v = 0.01;
         if (fromSlider) v = Math.max(0.1, Math.min(5, v));
-        $('sc').value = v;
-        if ($('scR')) $('scR').value = Math.max(0.1, Math.min(5, v));
-        $('sco').textContent = v.toFixed(2);
+        scEl.value = String(v);
+        if (scREl) scREl.value = String(Math.max(0.1, Math.min(5, v)));
+        scOut.textContent = v.toFixed(2);
         if (S.selected) S.selected.setLocalScale(v, v, v);
     };
-    $('sc').oninput = () => {
-        let raw = parseFloat($('sc').value);
+    scEl.oninput = () => {
+        let raw = parseFloat(scEl.value);
         if (!isFinite(raw)) raw = 1;
         applyScale(raw, false);
     };
-    $('sc').onchange = saveState;
-    if ($('scR')) {
-        $('scR').oninput = () => applyScale(parseFloat($('scR').value), true);
-        $('scR').onchange = saveState;
+    scEl.onchange = () => { if (typeof saveState === 'function') saveState(); };
+    if (scREl) {
+        scREl.oninput = () => applyScale(parseFloat(scREl.value), true);
+        scREl.onchange = () => { if (typeof saveState === 'function') saveState(); };
     }
 }
 
-// Material
-if ($('color')) {
-    $('color').oninput = (e) => {
-        if (!S.selected) return;
+if (byId('color')) {
+    const colorEl = byId('color');
+    colorEl.oninput = (e) => {
+        if (!S.selected || typeof S.selected.findComponents !== 'function') return;
         const hex = e.target.value;
-        const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+        const r = parseInt(hex.slice(1, 3), 16) / 255;
+        const g = parseInt(hex.slice(3, 5), 16) / 255;
+        const b = parseInt(hex.slice(5, 7), 16) / 255;
         S.selected.findComponents('render').forEach(comp => {
+            if (!comp || !comp.meshInstances) return;
             comp.meshInstances.forEach(mi => {
-                if (mi.material) {
+                if (mi && mi.material) {
                     const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                    mats.forEach(m => { if (m) { m.diffuse = new pc.Color(r, g, b); } });
+                    mats.forEach(m => { if (m) m.diffuse = new pc.Color(r, g, b); });
                 }
             });
         });
     };
-    $('color').onchange = () => {
-        if (!S.selected) return;
+    colorEl.onchange = () => {
+        if (!S.selected || typeof S.selected.findComponents !== 'function') return;
         S.selected.findComponents('render').forEach(comp => {
+            if (!comp || !comp.meshInstances) return;
             comp.meshInstances.forEach(mi => {
-                if (mi.material) {
+                if (mi && mi.material) {
                     const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                    mats.forEach(m => { if (m) m.update(); });
+                    mats.forEach(m => { if (m && typeof m.update === 'function') m.update(); });
                 }
             });
         });
-        saveState();
+        if (typeof saveState === 'function') saveState();
     };
 }
 
-if ($('rough')) {
-    $('rough').oninput = (e) => {
-        let v = parseFloat(e.target.value); $('rougho').textContent = v.toFixed(2);
-        if (S.selected) {
-            S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
-                if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.gloss = v; m.update(); } }); }
-            }));
+if (byId('rough')) {
+    const roughEl = byId('rough');
+    roughEl.oninput = (e) => {
+        const v = parseFloat(e.target.value);
+        const out = byId('rougho');
+        if (out && !isNaN(v)) out.textContent = v.toFixed(2);
+        if (S.selected && !isNaN(v) && typeof S.selected.findComponents === 'function') {
+            S.selected.findComponents('render').forEach(comp => {
+                if (!comp || !comp.meshInstances) return;
+                comp.meshInstances.forEach(mi => {
+                    if (mi && mi.material) {
+                        const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
+                        mats.forEach(m => {
+                            if (m) {
+                                m.gloss = v;
+                                if (typeof m.update === 'function') m.update();
+                            }
+                        });
+                    }
+                });
+            });
         }
     };
-    $('rough').onchange = saveState;
+    roughEl.onchange = () => { if (typeof saveState === 'function') saveState(); };
 }
-if ($('metal')) {
-    $('metal').oninput = (e) => {
-        let v = parseFloat(e.target.value); $('meto').textContent = v.toFixed(2);
-        if (S.selected) {
-            S.selected.findComponents('render').forEach(comp => comp.meshInstances.forEach(mi => {
-                if (mi.material) { const mats = Array.isArray(mi.material) ? mi.material : [mi.material]; mats.forEach(m => { if (m) { m.metalness = v; m.update(); } }); }
-            }));
+
+if (byId('metal')) {
+    const metalEl = byId('metal');
+    metalEl.oninput = (e) => {
+        const v = parseFloat(e.target.value);
+        const out = byId('meto');
+        if (out && !isNaN(v)) out.textContent = v.toFixed(2);
+        if (S.selected && !isNaN(v) && typeof S.selected.findComponents === 'function') {
+            S.selected.findComponents('render').forEach(comp => {
+                if (!comp || !comp.meshInstances) return;
+                comp.meshInstances.forEach(mi => {
+                    if (mi && mi.material) {
+                        const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
+                        mats.forEach(m => {
+                            if (m) {
+                                m.metalness = v;
+                                if (typeof m.update === 'function') m.update();
+                            }
+                        });
+                    }
+                });
+            });
         }
     };
-    $('metal').onchange = saveState;
+    metalEl.onchange = () => { if (typeof saveState === 'function') saveState(); };
 }
 
-// Animation quick toggles
-if ($('animSpin')) $('animSpin').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animSpin = !S.selected._animSpin; saveState(); $('status').textContent = "Auto-Spin: " + (S.selected._animSpin ? "ON" : "OFF"); };
-if ($('animPulse')) $('animPulse').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animPulse = !S.selected._animPulse; saveState(); $('status').textContent = "Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"); };
-if ($('animWobble')) $('animWobble').onclick = () => { if (!S.selected) return alert("Pilih objek dulu!"); S.selected._animWobble = !S.selected._animWobble; saveState(); $('status').textContent = "Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"); };
+if (byId('animSpin')) {
+    byId('animSpin').onclick = () => {
+        if (!S.selected) return alert("Pilih objek dulu!");
+        S.selected._animSpin = !S.selected._animSpin;
+        if (typeof saveState === 'function') saveState();
+        setToolbarStatus("Auto-Spin: " + (S.selected._animSpin ? "ON" : "OFF"));
+    };
+}
+if (byId('animPulse')) {
+    byId('animPulse').onclick = () => {
+        if (!S.selected) return alert("Pilih objek dulu!");
+        S.selected._animPulse = !S.selected._animPulse;
+        if (typeof saveState === 'function') saveState();
+        setToolbarStatus("Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"));
+    };
+}
+if (byId('animWobble')) {
+    byId('animWobble').onclick = () => {
+        if (!S.selected) return alert("Pilih objek dulu!");
+        S.selected._animWobble = !S.selected._animWobble;
+        if (typeof saveState === 'function') saveState();
+        setToolbarStatus("Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"));
+    };
+}
 
-// === PANEL CONTROLS (drawer mode di semua orientasi) ===
+// === PANEL CONTROLS ===
 function closeSidePanel(panelId) {
+    if (typeof window.__vtfSetPanel === 'function') {
+        window.__vtfSetPanel(panelId, false);
+        return;
+    }
     const panel = document.getElementById(panelId);
     if (!panel) return;
     panel.classList.remove('mobile-open');
@@ -194,9 +320,17 @@ window.closeSidePanel = closeSidePanel;
 function toggleSidePanel(panelId) {
     const panel = document.getElementById(panelId);
     if (!panel) return;
+    const isOpen = panel.classList.contains('mobile-open');
+    if (typeof window.__vtfSetPanel === 'function') {
+        const otherId = panelId === 'left' ? 'right' : 'left';
+        if (!isOpen) window.__vtfSetPanel(otherId, false);
+        window.__vtfSetPanel(panelId, !isOpen);
+        if (!isOpen) panel.scrollTop = 0;
+        return;
+    }
     panel.style.removeProperty('display');
     const otherId = panelId === 'left' ? 'right' : 'left';
-    if (panel.classList.contains('mobile-open')) {
+    if (isOpen) {
         closeSidePanel(panelId);
     } else {
         closeSidePanel(otherId);
@@ -229,26 +363,41 @@ function initPanelControls() {
 initPanelControls();
 
 // === ANIMATION CLIP CONTROLS ===
-if ($('animSelect')) $('animSelect').onchange = (e) => {
-    if (!S.selected || !S.selected._animAssets) return;
-    const idx = parseInt(e.target.value);
-    if (isNaN(idx)) return;
-    if (!S.selected.animation) S.selected.addComponent('animation');
-    S.selected.animation.asset = S.selected._animAssets[idx];
-    S.selected.animation.loop = true;
-    $('status').textContent = "Animasi siap: " + S.selected._animNames[idx];
-};
-if ($('animPlay')) $('animPlay').onclick = () => {
-    if (S.selected && S.selected.animation && S.selected.animation.asset) {
-        S.selected.animation.play();
-        $('status').textContent = "▶ Playing: " + S.selected.animation.asset.name;
-    }
-};
-if ($('animPause')) $('animPause').onclick = () => {
-    if (S.selected && S.selected.animation) { S.selected.animation.pause(); $('status').textContent = "⏸ Paused"; }
-};
-if ($('animStop')) $('animStop').onclick = () => {
-    if (S.selected && S.selected.animation) { S.selected.animation.stop(); $('status').textContent = "⏹ Stopped"; }
-};
+if (byId('animSelect')) {
+    byId('animSelect').onchange = (e) => {
+        if (!S.selected || !Array.isArray(S.selected._animAssets)) return;
+        const idx = parseInt(e.target.value, 10);
+        if (isNaN(idx) || idx < 0 || idx >= S.selected._animAssets.length) return;
+        if (!S.selected.animation) S.selected.addComponent('animation');
+        S.selected.animation.asset = S.selected._animAssets[idx];
+        S.selected.animation.loop = true;
+        const animName = (Array.isArray(S.selected._animNames) && S.selected._animNames[idx]) ? S.selected._animNames[idx] : `Anim_${idx}`;
+        setToolbarStatus("Animasi siap: " + animName);
+    };
+}
+if (byId('animPlay')) {
+    byId('animPlay').onclick = () => {
+        if (S.selected && S.selected.animation && S.selected.animation.asset) {
+            S.selected.animation.play();
+            setToolbarStatus("▶ Playing: " + (S.selected.animation.asset.name || "Clip"));
+        }
+    };
+}
+if (byId('animPause')) {
+    byId('animPause').onclick = () => {
+        if (S.selected && S.selected.animation) {
+            S.selected.animation.pause();
+            setToolbarStatus("⏸ Paused");
+        }
+    };
+}
+if (byId('animStop')) {
+    byId('animStop').onclick = () => {
+        if (S.selected && S.selected.animation) {
+            S.selected.animation.stop();
+            setToolbarStatus("⏹ Stopped");
+        }
+    };
+}
 
-dbg("=== toolbar.js DONE ===");
+logToolbar("=== toolbar.js DONE ===");
