@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#08080b">
     <title>VTuber Forge</title>
-    <link rel="stylesheet" href="style.css">
+    <link id="mainStylesheet" rel="stylesheet" href="css/style.css">
     <style>
         @font-face {
             font-family: "Optimistic";
@@ -27,7 +27,74 @@
         :where(code, pre, kbd, samp) {
             font-family: "Optimistic Mono", ui-monospace, monospace;
         }
+        /* Fallback minimal agar tata letak tidak hancur total jika css/style.css gagal dimuat */
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #08080b;
+            color: #eee;
+            overflow: hidden;
+        }
+        .app {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .work {
+            flex: 1;
+            min-height: 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .viewport {
+            position: absolute;
+            inset: 0;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
     </style>
+    <script>
+    (function () {
+        var styleCandidates = ['css/style.css', './css/style.css', 'file:///android_asset/css/style.css', 'style.css'];
+        var candidateIdx = 0;
+
+        function tryNextStyle() {
+            var link = document.getElementById('mainStylesheet');
+            if (!link) return;
+            candidateIdx++;
+            if (candidateIdx >= styleCandidates.length) {
+                window.__vtfStyleFailed = true;
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('[VTuber Forge] Gagal memuat css/style.css dari semua path.');
+                }
+                return;
+            }
+            var nextHref = styleCandidates[candidateIdx];
+            var fallbackLink = document.createElement('link');
+            fallbackLink.rel = 'stylesheet';
+            fallbackLink.href = nextHref;
+            fallbackLink.onload = function () {
+                window.__vtfStyleFailed = false;
+                window.__vtfLoadedStyleHref = nextHref;
+            };
+            fallbackLink.onerror = tryNextStyle;
+            document.head.appendChild(fallbackLink);
+        }
+
+        window.addEventListener('DOMContentLoaded', function () {
+            var link = document.getElementById('mainStylesheet');
+            if (!link) return;
+            link.addEventListener('error', tryNextStyle);
+            link.addEventListener('load', function () {
+                window.__vtfStyleFailed = false;
+                window.__vtfLoadedStyleHref = link.getAttribute('href');
+            });
+        });
+    })();
+    </script>
 </head>
 <body>
     <div class="app">
@@ -450,6 +517,8 @@
             if (missing.length) {
                 window.__vtfShowLoading('Gagal load: ' + missing.join(', ') + '. Cek internet / CDN, lalu refresh.');
                 var st = $('status'); if (st) st.textContent = 'Gagal load ' + missing.join(', ') + ' — cek internet lalu refresh.';
+            } else if (window.__vtfStyleFailed) {
+                var st2 = $('status'); if (st2) st2.textContent = 'Peringatan: css/style.css gagal dimuat — periksa folder assets/css/style.css.';
             }
         });
     })();
