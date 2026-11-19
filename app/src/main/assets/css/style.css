@@ -89,6 +89,8 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 
 .section { padding: 5px 0 10px; margin-bottom: 8px; border-bottom: 1px solid #292930; }
 .section h3 { font-size: 11px; color: #a1a1aa; text-transform: uppercase; letter-spacing: .09em; margin: 3px 2px 8px; }
+#faceTrackingSection { border: 1px solid #2e2938; border-radius: 8px; padding: 8px; background: #14111a; }
+#faceTrackingSection h3 { color: #d8b4fe; }
 #charDriverPanel { border: 1px solid #d946ef; border-radius: 8px; padding: 8px; background: #1a1020; }
 #charDriverPanel h3 { color: #d8b4fe; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
