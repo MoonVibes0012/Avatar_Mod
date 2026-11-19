@@ -1,33 +1,33 @@
 <!DOCTYPE html>
 <html lang="id">
-<head><style>
-@font-face {
-  font-family: "Optimistic";
-  font-style: normal;
-  font-weight: 400 600;
-  font-display: swap;
-  src: url("/fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Optimistic Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
-}
-:where(html) {
-  font-family: "Optimistic", system-ui, sans-serif;
-}
-:where(code, pre, kbd, samp) {
-  font-family: "Optimistic Mono", ui-monospace, monospace;
-}
-</style>
+<head>
     <meta charset="UTF-8">
-    <!-- FIX: jangan kunci zoom, biar user bisa pinch-zoom. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#08080b">
     <title>VTuber Forge</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        @font-face {
+            font-family: "Optimistic";
+            font-style: normal;
+            font-weight: 400 600;
+            font-display: swap;
+            src: url("fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
+        }
+        @font-face {
+            font-family: "Optimistic Mono";
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url("fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
+        }
+        :where(html) {
+            font-family: "Optimistic", system-ui, sans-serif;
+        }
+        :where(code, pre, kbd, samp) {
+            font-family: "Optimistic Mono", ui-monospace, monospace;
+        }
+    </style>
 </head>
 <body>
     <div class="app">
@@ -42,7 +42,7 @@
             <button type="button" id="parts" title="Menu Objek & Primitives" data-panel="left" aria-expanded="false">☰ Menu</button>
             <button type="button" id="inspector" title="Inspector & Transform" data-panel="right" aria-expanded="false">⚙️ Inspect</button>
             <button type="button" id="btnCharDriver" title="Character Driver — animasi procedural">🎭</button>
-            <!-- FIX: tombol debug sekarang pakai id + addEventListener, bukan inline handler. -->
+            <button type="button" id="btnFaceTrack" title="Face Tracking — kamera depan">📷</button>
             <button type="button" id="btnDebug" title="Toggle Debug Log">🐛</button>
         </div>
 
@@ -58,7 +58,7 @@
                 </div>
             </div>
 
-            <!-- Backdrop buat nutup panel pas klik di luar. FIX: sebelumnya panel cuma bisa ditutup via tombol ✕ -->
+            <!-- Backdrop untuk menutup panel saat klik di luar -->
             <div id="panelBackdrop" hidden></div>
 
             <!-- LEFT PANEL: MENU -->
@@ -119,12 +119,9 @@
                         <input type="range" id="fpsLimit" min="10" max="120" value="60">
                     </div>
                     <div class="field">
-                        <label>Texture Quality <span id="texScaleOut">100</span>%</label>
+                        <label>Texture Scale <span id="texScaleOut">100</span>%</label>
                         <input type="range" id="texScale" min="10" max="100" value="100">
                     </div>
-                    <!-- FIX: tombol screenshot duplikat. Yang ini dipertahankan ID-nya (#screenshot)
-                         biar file JS lama yang bind ke #screenshot gak patah, tapi dia cuma
-                         nerusin klik ke #btnScreenshot (lihat boot script). Satu sumber kebenaran. -->
                     <button type="button" id="screenshot" style="width:100%; margin-top:5px;">Take Screenshot</button>
                 </div>
             </div>
@@ -209,7 +206,7 @@
                     </div>
                 </div>
 
-                <!-- VERTEX EDIT PANEL (Hidden by default) -->
+                <!-- VERTEX EDIT PANEL -->
                 <div id="vertexPanel" class="section" style="display:none;">
                     <h3>Vertex Edit Mode</h3>
                     <div class="field">
@@ -230,7 +227,7 @@
                     </div>
                 </div>
 
-                <!-- BONE EDIT PANEL (Hidden by default) -->
+                <!-- BONE EDIT PANEL -->
                 <div id="bonePanel" class="section" style="display:none;">
                     <h3>Bone Hierarchy (Preview)</h3>
                     <select id="boneList" style="width:100%; margin-bottom:8px;"></select>
@@ -301,10 +298,6 @@
                 </div>
 
                 <!-- CHARACTER DRIVER PANEL -->
-                <!-- PENTING: ini .section DI DALAM #right, bukan panel sendiri.
-                     Jangan buka section ini tanpa buka #right dulu — character_driver.js
-                     versi baru sudah melakukan itu. Boot script di bawah juga
-                     nge-backup: kalau #right ketutup, tombol 🎭 tetap buka #right. -->
                 <div id="charDriverPanel" class="section" style="display:none;">
                     <h3>🎭 Character Driver</h3>
                     <div class="field">
@@ -359,9 +352,6 @@
         </div>
 
         <!-- STATUS BAR -->
-        <!-- FIX: hapus tombol duplikat yang display:none di status bar.
-             Sebelumnya ada 2 sumber kebenaran: top bar (#btnSave dll) vs status bar (#save dll).
-             Sekarang cuma top bar yang dipakai. ID lama itu sengaja TIDAK dibuat lagi supaya gak ada yang nyangkut bind ke tombol hantu. -->
         <div class="status">
             <span id="status">Ready.</span>
             <span style="margin-left:auto;">
@@ -382,14 +372,10 @@
     </div>
     <noscript><div style="position:fixed;inset:0;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;z-index:999999;">VTuber Forge butuh JavaScript.</div></noscript>
 
-    <!-- BOOT SCRIPT: jalan SEBELUM library lain. Tugasnya cuma 3:
-         1) panel buka/tutup (fallback kalau controls.js gagal),
-         2) tombol duplikat & debug (tanpa inline handler),
-         3) cek CDN gagal -> kasih pesan, jangan diam-diam error. -->
+    <!-- BOOT SCRIPT -->
     <script>
     (function () {
         var $ = function (id) { return document.getElementById(id); };
-        // --- Panel: satu fungsi untuk semua panel ---
         function setPanel(id, open) {
             var panel = $(id); if (!panel) return;
             panel.classList.toggle('mobile-open', !!open);
@@ -415,36 +401,28 @@
                 setPanel('left', false); setPanel('right', false);
             }
         });
-        // --- Debug: ganti inline handler lama ---
         var dbgBtn = $('btnDebug');
         if (dbgBtn) dbgBtn.addEventListener('click', function () {
             if (typeof window.toggleDebug === 'function') { window.toggleDebug(); return; }
             var ov = $('debugOverlay'); if (ov) ov.style.display = (ov.style.display === 'block' ? 'none' : 'block');
         });
-        // --- Screenshot duplikat: #screenshot -> terusin ke #btnScreenshot ---
         var shot2 = $('screenshot'), shot1 = $('btnScreenshot');
         if (shot2 && shot1) shot2.addEventListener('click', function () { shot1.click(); });
-        // --- Import duplikat: #importMenu -> terusin ke #btnImport ---
         var imp2 = $('importMenu'), imp1 = $('btnImport');
         if (imp2 && imp1) imp2.addEventListener('click', function () { imp1.click(); });
-        // --- Loading overlay: harus flex, bukan block, biar spinner ke tengah ---
         window.__vtfShowLoading = function (text) {
             var ov = $('loadingOverlay'); if (!ov) return;
             if (text) { var t = $('loadingText'); if (t) t.textContent = text; }
             ov.style.display = 'flex';
         };
         window.__vtfHideLoading = function () {
-            var ov = $('loadingOverlay'); if (ov) ov.style.display = 'none';
+            var ov = $('loadingOverlay'); if (!ov) return;
+            ov.style.display = 'none';
         };
-        // --- Cek CDN: jangan diam-diam gagal ---
         window.addEventListener('load', function () {
             var missing = [];
             if (typeof window.pc === 'undefined') missing.push('PlayCanvas');
-            if (typeof window.FaceMesh === 'undefined' && typeof window.FaceMesh !== 'function') {
-                // FaceMesh kadang nempel di window.FaceMesh, kadang tidak — cek longgar, jangan blokir app
-            }
             if (typeof window.Kalidokit === 'undefined' && typeof window.KalidoKit === 'undefined') {
-                // Kalidokit opsional untuk face tracking; jangan blokir, cukup warning
                 if (typeof console !== 'undefined') console.warn('[VTuber Forge] Kalidokit tidak ke-load, face tracking nonaktif.');
             }
             if (missing.length) {
@@ -456,10 +434,7 @@
     </script>
 
     <!-- SCRIPTS -->
-    <!-- PlayCanvas Engine (CDN) -->
     <script src="https://code.playcanvas.com/playcanvas-stable.min.js"></script>
-
-    <!-- Face Tracking Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.4/dist/kalidokit.umd.js"></script>
 
@@ -495,5 +470,5 @@
     <script src="js/ui/toolbar.js"></script>
     <script src="js/ui/expressions.js"></script>
     <script src="js/animation/character_driver.js"></script>
-<script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
+</body>
 </html>
