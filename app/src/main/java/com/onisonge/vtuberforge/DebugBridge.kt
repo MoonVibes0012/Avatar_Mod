@@ -1,5 +1,6 @@
 package com.onisonge.vtuberforge
 
+import android.app.Activity
 import android.content.Context
 import android.os.Environment
 import android.util.Base64
@@ -13,7 +14,20 @@ import java.util.Date
 import java.util.Locale
 
 class DebugBridge(private val context: Context) {
-    companion object { const val TAG = "VTuberForge_Debug" }
+    companion object {
+        const val TAG = "VTuberForge_Debug"
+    }
+
+    private fun runOnUiThreadSafe(action: () -> Unit) {
+        val act = context as? Activity
+        if (act != null && !act.isFinishing && !act.isDestroyed) {
+            act.runOnUiThread {
+                if (!act.isFinishing && !act.isDestroyed) {
+                    action()
+                }
+            }
+        }
+    }
 
     @JavascriptInterface
     fun log(message: String) {
@@ -22,7 +36,10 @@ class DebugBridge(private val context: Context) {
 
     @JavascriptInterface
     fun exitApp() {
-        (context as MainActivity).runOnUiThread { context.finishAffinity() }
+        runOnUiThreadSafe {
+            val act = context as? Activity
+            act?.finishAffinity()
+        }
     }
 
     @JavascriptInterface
@@ -30,31 +47,37 @@ class DebugBridge(private val context: Context) {
         try {
             val decodedBytes = Base64.decode(base64Data, Base64.DEFAULT)
             val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            
+
             if (downloadsDir == null) {
-                (context as MainActivity).runOnUiThread {
+                runOnUiThreadSafe {
                     Toast.makeText(context, "Penyimpanan tidak tersedia!", Toast.LENGTH_SHORT).show()
                 }
                 return
             }
 
-            val safeName = filename.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val rawName = if (filename.isBlank()) "vtuber_export" else filename
+            val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "vtuber_export" }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val nameWithoutExt = safeName.substringBeforeLast(".")
-            val ext = safeName.substringAfterLast(".", "")
-            val newFilename = "${nameWithoutExt}_${timeStamp}.$ext"
-            
+            val hasDot = safeName.contains(".") && !safeName.startsWith(".")
+            val nameWithoutExt = if (hasDot) safeName.substringBeforeLast(".") else safeName
+            val ext = if (hasDot) safeName.substringAfterLast(".", "") else ""
+            val newFilename = if (ext.isNotEmpty()) {
+                "${nameWithoutExt}_${timeStamp}.$ext"
+            } else {
+                "${nameWithoutExt}_${timeStamp}"
+            }
+
             val file = File(downloadsDir, newFilename)
-            val fos = FileOutputStream(file)
-            fos.write(decodedBytes)
-            fos.close()
-            
-            (context as MainActivity).runOnUiThread {
+            FileOutputStream(file).use { fos ->
+                fos.write(decodedBytes)
+            }
+
+            runOnUiThreadSafe {
                 Toast.makeText(context, "Tersimpan: ${file.name}", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Gagal download: ${e.message}")
-            (context as MainActivity).runOnUiThread {
+            runOnUiThreadSafe {
                 Toast.makeText(context, "Gagal menyimpan file", Toast.LENGTH_SHORT).show()
             }
         }
