@@ -1,21 +1,75 @@
+/* ===== VTuber Forge — style.css ===== */
+/* FULL REPLACE — fix: 100dvh tanpa fallback, debug overlay gak bisa di-scroll,
+   panel tanpa backdrop, checkbox label mental, loading overlay, focus, dll.
+   Semua class/id lama dipertahankan, jadi app.html lama/barupun jalan. */
+
 *, *::before, *::after { box-sizing: border-box; }
-html, body { margin: 0; height: 100dvh; overflow: hidden; background: #08080b; color: #eee; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none; touch-action: manipulation; overscroll-behavior: none; -webkit-touch-callout: none; }
+
+/* FIX: 100dvh tanpa fallback bikin layout 0 tinggi di WebView lama.
+   Tulis 100vh dulu (fallback), baru 100dvh (yang support akan menang). */
+html, body {
+    margin: 0;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background: #08080b;
+    color: #eee;
+    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+    -webkit-touch-callout: none;
+}
 input, textarea, select { user-select: text; -webkit-user-select: text; font: inherit; }
 button { font: inherit; background: #18181d; color: #eee; border: 1px solid #3b3b46; border-radius: 8px; padding: 8px 10px; min-height: 38px; cursor: pointer; }
-button:active { background: #292934; }
 
-.app { height: 100dvh; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: max(env(safe-area-inset-bottom), 10px); direction: ltr !important; }
+/* FIX: biar user keyboard tau lagi fokus di mana. Sebelumnya gak ada focus sama sekali. */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid #d946ef;
+    outline-offset: 1px;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+.app {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+    /* FIX: max() gak support di browser lama -> padding-bottom jadi invalid.
+       Kasih fallback dulu, baru yang pakai max(). */
+    padding-bottom: 10px;
+    padding-bottom: max(env(safe-area-inset-bottom), 10px);
+    direction: ltr !important;
+}
 
 .top { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #292930; background: #101014; min-height: 48px; flex-wrap: wrap; }
 .brand { font-weight: 800; font-size: 14px; margin-right: auto; white-space: nowrap; }
 .badge { font-size: 10px; border: 1px solid #4b4b58; border-radius: 99px; padding: 4px 7px; color: #d8b4fe; }
 .top button { min-height: 34px; padding: 5px 7px; font-size: 16px; min-width: 38px; }
 .top button[title] { font-size: 14px; }
+/* Tombol panel yang lagi kebuka, biar keliatan */
+.top button[aria-expanded="true"] { background: #3a193e; border-color: #d946ef; }
 
 /* ===== WORK AREA: viewport full, panels = overlay ===== */
 .work { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .viewport { position: absolute; inset: 0; background: #07070a; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* FIX: backdrop buat panel. Sebelumnya panel cuma bisa ditutup via tombol ✕,
+   klik di luar gak ngapa-ngapain. Backdrop ini dari app.html baru (#panelBackdrop).
+   Kalau app.html lamamu belum punya #panelBackdrop, style ini aman-aman aja (gak tampil). */
+#panelBackdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, .45);
+    z-index: 15000;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+#panelBackdrop[hidden] { display: none; }
 
 /* ===== PANELS: SELALU DRAWER MODE (portrait & landscape) ===== */
 .panel {
@@ -33,30 +87,45 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
     overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
+    /* FIX: sebelumnya muncul mendadak tanpa transisi. */
+    animation: panelIn .18s ease-out;
 }
+@keyframes panelIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
 .panel#left { left: 0; border-right: 2px solid #3b3b46; }
-.panel#right { right: 0; border-left: 2px solid #3b3b46; box-shadow: -4px 0 16px rgba(0,0,0,0.6); }
+.panel#right { right: 0; border-left: 2px solid #3b3b46; box-shadow: -4px 0 16px rgba(0,0,0,0.6); animation-name: panelInRight; }
+@keyframes panelInRight { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 .panel.mobile-open { display: block; }
 
-.panel-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #292930; margin-bottom: 8px; position: relative; z-index: 10; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #292930; margin-bottom: 8px; position: sticky; top: -8px; z-index: 10; background: #101014; padding-top: 2px; }
 .panel-header h3 { margin: 0; border: none; padding: 0; font-size: 12px; color: #d8b4fe; }
 .panel-header button { min-height: 28px; padding: 4px 8px; font-size: 11px; background: #3b3b46; touch-action: manipulation; }
 
 .section { padding: 5px 0 10px; margin-bottom: 8px; border-bottom: 1px solid #292930; }
 .section h3 { font-size: 11px; color: #a1a1aa; text-transform: uppercase; letter-spacing: .09em; margin: 3px 2px 8px; }
+/* FIX: charDriverPanel itu .section di dalam #right. Kasih pembeda biar ketahuan ini panel driver,
+   bukan section biasa. */
+#charDriverPanel { border: 1px solid #d946ef; border-radius: 8px; padding: 8px; background: #1a1020; }
+#charDriverPanel h3 { color: #d8b4fe; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .tree button { width: 100%; text-align: left; margin-bottom: 4px; }
 .tree button.sel { outline: 2px solid #d946ef; background: #2a172e; }
 .hud { position: absolute; left: 8px; right: 8px; top: 8px; display: flex; gap: 5px; flex-wrap: wrap; pointer-events: none; z-index: 100; }
 .hud span { background: #101014dd; border: 1px solid #3b3b46; border-radius: 99px; padding: 4px 7px; font-size: 10px; }
 .field { margin: 7px 0; }
-.field label { display: flex; justify-content: space-between; color: #a1a1aa; font-size: 11px; margin-bottom: 4px; }
-.field input[type=range] { width: 100%; }
+.field label { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: #a1a1aa; font-size: 11px; margin-bottom: 4px; }
+/* FIX: label checkbox sebelumnya pakai .field label (flex + space-between),
+   jadinya checkbox di kiri, teks mental ke kanan kejauhan.
+   app.html baru pakai class .check untuk label checkbox. app.html lama tetap jalan,
+   karena ini cuma nambah class baru, bukan ngubah yang lama. */
+.field label.check { justify-content: flex-start; gap: 8px; cursor: pointer; }
+.field label.check input[type="checkbox"] { width: 16px; height: 16px; accent-color: #d946ef; flex: none; margin: 0; }
+.field input[type=range] { width: 100%; accent-color: #d946ef; }
 .field input[type=number], select { width: 100%; background: #18181d; color: #eee; border: 1px solid #3b3b46; border-radius: 7px; padding: 7px; }
 .color { width: 100%; height: 36px; padding: 2px; }
 .toolrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
 .toolrow button.on { background: #3a193e; border-color: #d946ef; }
-.status { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-top: 1px solid #292930; color: #a1a1aa; font-size: 11px; }
+.status { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-top: 1px solid #292930; color: #a1a1aa; font-size: 11px; min-height: 32px; }
+.status #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .expr-btn { font-size: 20px; padding: 8px 4px; min-height: 44px; border-radius: 8px; transition: all 0.15s; }
 .expr-btn:active { background: #3a193e; border-color: #d946ef; transform: scale(0.95); }
 .expr-btn.active { background: #3a193e; border-color: #d946ef; box-shadow: 0 0 8px rgba(217, 70, 239, 0.5); }
@@ -74,8 +143,58 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 @media (min-width: 768px) {
     .panel { width: 360px; max-width: 50%; }
 }
+/* FIX: di desktop jangan paksa drawer sempit terus. Kalau mau, panel bisa dibuka berdampingan.
+   Ini opsional & gak ngerusak HP: cuma di layar sangat lebar panel jadi lebih lega. */
+@media (min-width: 1200px) {
+    .panel { width: 400px; }
+}
 
-#debugOverlay { position: fixed; bottom: 50px; left: 8px; right: 8px; max-height: 30%; overflow: auto; background: rgba(0,0,0,0.85); color: #0f0; font: 10px monospace; padding: 6px; border: 1px solid #0f0; border-radius: 4px; z-index: 30000; pointer-events: none; white-space: pre-wrap; display: none; }
-#loadingOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 99999; display: none; justify-content: center; align-items: center; flex-direction: column; color: #fff; }
+/* FIX: sebelumnya pointer-events:none, jadi log gak bisa di-scroll / di-copy di HP.
+   Sekarang bisa di-scroll & di-select, tapi default tetap hidden. */
+#debugOverlay {
+    position: fixed;
+    bottom: 50px;
+    left: 8px;
+    right: 8px;
+    max-height: 30%;
+    overflow: auto;
+    background: rgba(0,0,0,0.85);
+    color: #0f0;
+    font: 10px monospace;
+    padding: 6px;
+    border: 1px solid #0f0;
+    border-radius: 4px;
+    z-index: 30000;
+    pointer-events: auto;
+    user-select: text;
+    -webkit-user-select: text;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: none;
+}
+
+/* FIX: sebelumnya display:none + justify-content. Kalau JS nampilin pakai display:block,
+   spinner jadi gak ke tengah. Sekarang jelas: kalau tampil, harus flex. */
+#loadingOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 99999;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    color: #fff;
+    text-align: center;
+    padding: 16px;
+    gap: 12px;
+}
+#loadingOverlay .spinner { margin-bottom: 0; }
 .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top-color: #d946ef; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* FIX: kalau user matiin animasi di OS (reduced motion), jangan muter-muter terus. */
+@media (prefers-reduced-motion: reduce) {
+    .spinner, .panel { animation: none; }
+    .expr-btn { transition: none; }
+}
