@@ -1,50 +1,111 @@
 /* ===== VTuber Forge — js/core/debug.js ===== */
-// Logging, error handling, dan Android bridge
+// Debug console overlay, bridge ke Android, dan global error handlers
 
-window.allLogs = [];
+const allLogs = [];
+window.allLogs = allLogs;
 
-const escapeHtml = (str) => String(str).replace(/[&<>"']/g, c => 
-    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])
-);
+function setDebugStatus(msg) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = msg;
+}
 
-window.onerror = function(msg, url, line, col, error) {
-    const errMsg = "JS_ERROR: " + msg + " at line " + line;
-    dbg(errMsg);
-    if(error && error.stack) dbg("STACK: " + error.stack);
+function getDebugOverlay() {
+    return document.getElementById('debugOverlay');
+}
+
+function dbg(msg) {
+    const now = new Date();
+    const ts = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    const line = `[${ts}] ${msg}`;
+    allLogs.push(line);
+    if (allLogs.length > 500) {
+        allLogs.splice(0, allLogs.length - 500);
+    }
+
+    if (typeof console !== 'undefined' && typeof console.log === 'function') {
+        try { console.log(line); } catch (e) {}
+    }
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.log === 'function') {
+        try {
+            window.AndroidBridge.log(line);
+        } catch (e) {
+            if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                try { console.warn('AndroidBridge.log failed:', e.message); } catch (ignored) {}
+            }
+        }
+    }
+
+    const dbgEl = getDebugOverlay();
+    if (dbgEl) {
+        try {
+            const safeEscape = typeof window.escapeHtml === 'function'
+                ? window.escapeHtml
+                : (str) => String(str).replace(/[&<>"']/g, c => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                }[c]));
+            dbgEl.innerHTML += safeEscape(line) + '<br>';
+            dbgEl.scrollTop = dbgEl.scrollHeight;
+        } catch (e) {}
+    }
+}
+window.dbg = dbg;
+
+function toggleDebug() {
+    const dbgEl = getDebugOverlay();
+    if (!dbgEl) return;
+    const isVisible = dbgEl.style.display === 'block';
+    dbgEl.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible) {
+        dbgEl.scrollTop = dbgEl.scrollHeight;
+        setDebugStatus("Debug overlay ON — klik lagi untuk sembunyikan");
+    } else {
+        setDebugStatus("Debug overlay OFF");
+    }
+}
+window.toggleDebug = toggleDebug;
+
+window.handleAndroidBack = function () {
+    const leftPanel = document.getElementById('left');
+    const rightPanel = document.getElementById('right');
+    const leftOpen = !!(leftPanel && leftPanel.classList.contains('mobile-open'));
+    const rightOpen = !!(rightPanel && rightPanel.classList.contains('mobile-open'));
+
+    if (leftOpen || rightOpen) {
+        if (typeof window.__vtfSetPanel === 'function') {
+            if (leftOpen) window.__vtfSetPanel('left', false);
+            if (rightOpen) window.__vtfSetPanel('right', false);
+        } else {
+            if (leftPanel) leftPanel.classList.remove('mobile-open');
+            if (rightPanel) rightPanel.classList.remove('mobile-open');
+            const backdrop = document.getElementById('panelBackdrop');
+            if (backdrop) backdrop.hidden = true;
+        }
+        return true;
+    }
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.exitApp === 'function') {
+        window.AndroidBridge.exitApp();
+        return true;
+    }
+
     return false;
 };
 
-window.addEventListener('unhandledrejection', event => { 
-    dbg("Promise Error: " + event.reason); 
+window.addEventListener('error', function (e) {
+    const msg = `UNCAUGHT ERROR: ${e.message || 'Unknown error'} at ${(e.filename || 'unknown')}:${e.lineno || 0}:${e.colno || 0}`;
+    dbg(msg);
+    setDebugStatus("⚠ Error: " + (e.message || 'Terjadi kesalahan'));
 });
 
-window.handleAndroidBack = function() {
-    if (confirm("Keluar? Pastikan sudah Save.")) {
-        if (window.AndroidBridge && window.AndroidBridge.exitApp) 
-            window.AndroidBridge.exitApp();
-    }
-};
+window.addEventListener('unhandledrejection', function (e) {
+    const reason = e && e.reason ? (e.reason.message || String(e.reason)) : 'Unknown rejection';
+    dbg("UNHANDLED PROMISE: " + reason);
+    setDebugStatus("⚠ Promise Error: " + reason);
+});
 
-window.dbg = function(msg) {
-    window.allLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-    if(window.allLogs.length > 100) window.allLogs.shift();
-    
-    const el = document.getElementById('debugOverlay'); 
-    if (!el) return;
-    
-    const t = new Date().toLocaleTimeString();
-    el.textContent = `[${t}] ${msg}\n` + el.textContent;
-    if (el.textContent.split('\n').length > 15) 
-        el.textContent = el.textContent.split('\n').slice(0, 15).join('\n');
-    
-    try { 
-        if (window.AndroidBridge) window.AndroidBridge.log(msg); 
-    } catch(e) {}
-};
-
-window.toggleDebug = function() {
-    const el = document.getElementById('debugOverlay');
-    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-};
-
-setTimeout(() => { dbg('=== DEBUG READY (tap 🐛 to view) ==='); }, 500);
+dbg("=== debug.js LOADED ===");
