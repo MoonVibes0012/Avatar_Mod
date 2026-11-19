@@ -1,12 +1,7 @@
 /* ===== VTuber Forge — style.css ===== */
-/* FULL REPLACE — fix: 100dvh tanpa fallback, debug overlay gak bisa di-scroll,
-   panel tanpa backdrop, checkbox label mental, loading overlay, focus, dll.
-   Semua class/id lama dipertahankan, jadi app.html lama/barupun jalan. */
 
 *, *::before, *::after { box-sizing: border-box; }
 
-/* FIX: 100dvh tanpa fallback bikin layout 0 tinggi di WebView lama.
-   Tulis 100vh dulu (fallback), baru 100dvh (yang support akan menang). */
 html, body {
     margin: 0;
     height: 100vh;
@@ -24,7 +19,6 @@ html, body {
 input, textarea, select { user-select: text; -webkit-user-select: text; font: inherit; }
 button { font: inherit; background: #18181d; color: #eee; border: 1px solid #3b3b46; border-radius: 8px; padding: 8px 10px; min-height: 38px; cursor: pointer; }
 
-/* FIX: biar user keyboard tau lagi fokus di mana. Sebelumnya gak ada focus sama sekali. */
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
     outline: 2px solid #d946ef;
     outline-offset: 1px;
@@ -37,8 +31,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
     display: flex;
     flex-direction: column;
     padding-top: env(safe-area-inset-top);
-    /* FIX: max() gak support di browser lama -> padding-bottom jadi invalid.
-       Kasih fallback dulu, baru yang pakai max(). */
     padding-bottom: 10px;
     padding-bottom: max(env(safe-area-inset-bottom), 10px);
     direction: ltr !important;
@@ -49,17 +41,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .badge { font-size: 10px; border: 1px solid #4b4b58; border-radius: 99px; padding: 4px 7px; color: #d8b4fe; }
 .top button { min-height: 34px; padding: 5px 7px; font-size: 16px; min-width: 38px; }
 .top button[title] { font-size: 14px; }
-/* Tombol panel yang lagi kebuka, biar keliatan */
-.top button[aria-expanded="true"] { background: #3a193e; border-color: #d946ef; }
+.top button[aria-expanded="true"], .top button.active { background: #3a193e; border-color: #d946ef; }
 
 /* ===== WORK AREA: viewport full, panels = overlay ===== */
 .work { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .viewport { position: absolute; inset: 0; background: #07070a; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 
-/* FIX: backdrop buat panel. Sebelumnya panel cuma bisa ditutup via tombol ✕,
-   klik di luar gak ngapa-ngapain. Backdrop ini dari app.html baru (#panelBackdrop).
-   Kalau app.html lamamu belum punya #panelBackdrop, style ini aman-aman aja (gak tampil). */
 #panelBackdrop {
     position: absolute;
     inset: 0;
@@ -87,7 +75,6 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
     overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    /* FIX: sebelumnya muncul mendadak tanpa transisi. */
     animation: panelIn .18s ease-out;
 }
 @keyframes panelIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
@@ -102,8 +89,6 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 
 .section { padding: 5px 0 10px; margin-bottom: 8px; border-bottom: 1px solid #292930; }
 .section h3 { font-size: 11px; color: #a1a1aa; text-transform: uppercase; letter-spacing: .09em; margin: 3px 2px 8px; }
-/* FIX: charDriverPanel itu .section di dalam #right. Kasih pembeda biar ketahuan ini panel driver,
-   bukan section biasa. */
 #charDriverPanel { border: 1px solid #d946ef; border-radius: 8px; padding: 8px; background: #1a1020; }
 #charDriverPanel h3 { color: #d8b4fe; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
@@ -113,10 +98,6 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .hud span { background: #101014dd; border: 1px solid #3b3b46; border-radius: 99px; padding: 4px 7px; font-size: 10px; }
 .field { margin: 7px 0; }
 .field label { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: #a1a1aa; font-size: 11px; margin-bottom: 4px; }
-/* FIX: label checkbox sebelumnya pakai .field label (flex + space-between),
-   jadinya checkbox di kiri, teks mental ke kanan kejauhan.
-   app.html baru pakai class .check untuk label checkbox. app.html lama tetap jalan,
-   karena ini cuma nambah class baru, bukan ngubah yang lama. */
 .field label.check { justify-content: flex-start; gap: 8px; cursor: pointer; }
 .field label.check input[type="checkbox"] { width: 16px; height: 16px; accent-color: #d946ef; flex: none; margin: 0; }
 .field input[type=range] { width: 100%; accent-color: #d946ef; }
@@ -143,14 +124,10 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 @media (min-width: 768px) {
     .panel { width: 360px; max-width: 50%; }
 }
-/* FIX: di desktop jangan paksa drawer sempit terus. Kalau mau, panel bisa dibuka berdampingan.
-   Ini opsional & gak ngerusak HP: cuma di layar sangat lebar panel jadi lebih lega. */
 @media (min-width: 1200px) {
     .panel { width: 400px; }
 }
 
-/* FIX: sebelumnya pointer-events:none, jadi log gak bisa di-scroll / di-copy di HP.
-   Sekarang bisa di-scroll & di-select, tapi default tetap hidden. */
 #debugOverlay {
     position: fixed;
     bottom: 50px;
@@ -173,8 +150,6 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
     display: none;
 }
 
-/* FIX: sebelumnya display:none + justify-content. Kalau JS nampilin pakai display:block,
-   spinner jadi gak ke tengah. Sekarang jelas: kalau tampil, harus flex. */
 #loadingOverlay {
     position: fixed;
     inset: 0;
@@ -193,7 +168,6 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top-color: #d946ef; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* FIX: kalau user matiin animasi di OS (reduced motion), jangan muter-muter terus. */
 @media (prefers-reduced-motion: reduce) {
     .spinner, .panel { animation: none; }
     .expr-btn { transition: none; }
