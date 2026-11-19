@@ -2,21 +2,56 @@
 // Object Splitting: Memisahkan mesh menjadi beberapa objek terpisah
 // Mode: Connected Components, Material
 
-/**
- * SPLIT BY CONNECTED COMPONENTS
- * Algoritma: BFS untuk menemukan kelompok vertex yang terhubung
- * Berguna untuk memisahkan mesh import yang terdiri dari beberapa bagian
- */
+function setSplitStatus(msg) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = msg;
+}
+
+function logSplit(msg) {
+    if (typeof window.dbg === 'function') {
+        try { window.dbg(msg); } catch (e) {}
+    } else if (typeof console !== 'undefined') {
+        console.log(msg);
+    }
+}
+
+function showSplitLoading(show, text) {
+    const ov = document.getElementById('loadingOverlay');
+    const txt = document.getElementById('loadingText');
+    if (txt && text) txt.textContent = text;
+    if (ov) ov.style.display = show ? 'flex' : 'none';
+}
+
+function cloneSplitMaterial(mat) {
+    if (!mat) {
+        const fallback = new pc.StandardMaterial();
+        fallback.diffuse = new pc.Color(0.6, 0.2, 0.8);
+        if (typeof fallback.update === 'function') fallback.update();
+        return fallback;
+    }
+    try {
+        if (Array.isArray(mat)) {
+            const first = mat[0];
+            return (first && typeof first.clone === 'function') ? first.clone() : first;
+        }
+        return (typeof mat.clone === 'function') ? mat.clone() : mat;
+    } catch (e) {
+        const fallback = new pc.StandardMaterial();
+        fallback.diffuse = new pc.Color(0.6, 0.2, 0.8);
+        if (typeof fallback.update === 'function') fallback.update();
+        return fallback;
+    }
+}
+
 function splitByConnectedComponents() {
     if (!S.selected) return alert("Pilih objek dulu!");
 
-    const renderComp = S.selected.findComponent('render');
+    const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
     if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
         return alert("Objek tidak memiliki mesh!");
     }
 
-    // Cek apakah skinned mesh (tidak didukung)
-    const hasSkin = renderComp.meshInstances.some(mi => mi.skinInstance != null);
+    const hasSkin = renderComp.meshInstances.some(mi => mi && mi.skinInstance != null);
     if (hasSkin) {
         return alert("Model dengan skeleton (skinned) tidak bisa di-split.\n\nHanya mesh statis yang didukung.");
     }
@@ -25,43 +60,42 @@ function splitByConnectedComponents() {
     if (!mi || !mi.mesh) return alert("Mesh tidak valid!");
 
     try {
-        const positions = mi.mesh.getPositions();
-        const indices = mi.mesh.getIndices();
+        const positions = mi.mesh.getPositions ? mi.mesh.getPositions() : null;
+        const indices = mi.mesh.getIndices ? mi.mesh.getIndices() : null;
         const normals = mi.mesh.getNormals ? mi.mesh.getNormals() : null;
         const uvs = mi.mesh.getUvs ? mi.mesh.getUvs() : null;
 
-        if (!positions || !indices || positions.length === 0) {
+        if (!positions || !indices || positions.length === 0 || indices.length < 3) {
             return alert("Mesh data kosong atau compressed (Draco)!");
         }
 
-        const vertexCount = positions.length / 3;
+        const vertexCount = Math.floor(positions.length / 3);
         if (vertexCount > 50000) {
             if (!confirm("Mesh besar: " + vertexCount + " vertex.\nProses split bisa lama. Lanjutkan?")) {
                 return;
             }
         }
 
-        $('status').textContent = "Menganalisis connected components...";
-        $('loadingOverlay').style.display = 'flex';
-        $('loadingText').textContent = "Splitting mesh...";
+        setSplitStatus("Menganalisis connected components...");
+        showSplitLoading(true, "Splitting mesh...");
 
-        // Gunakan setTimeout agar UI sempat update
         setTimeout(() => {
             try {
-                // === STEP 1: Build adjacency list dari triangles ===
                 const adjacency = new Array(vertexCount);
                 for (let i = 0; i < vertexCount; i++) {
                     adjacency[i] = new Set();
                 }
 
-                for (let i = 0; i < indices.length; i += 3) {
-                    const a = indices[i], b = indices[i+1], c = indices[i+2];
-                    adjacency[a].add(b).add(c);
-                    adjacency[b].add(a).add(c);
-                    adjacency[c].add(a).add(b);
+                const triLimit = indices.length - (indices.length % 3);
+                for (let i = 0; i < triLimit; i += 3) {
+                    const a = indices[i], b = indices[i + 1], c = indices[i + 2];
+                    if (a < vertexCount && b < vertexCount && c < vertexCount) {
+                        adjacency[a].add(b).add(c);
+                        adjacency[b].add(a).add(c);
+                        adjacency[c].add(a).add(b);
+                    }
                 }
 
-                // === STEP 2: Find connected components via BFS ===
                 const visited = new Uint8Array(vertexCount);
                 const components = [];
 
@@ -70,10 +104,11 @@ function splitByConnectedComponents() {
 
                     const component = [];
                     const queue = [startVertex];
+                    let head = 0;
                     visited[startVertex] = 1;
 
-                    while (queue.length > 0) {
-                        const v = queue.shift();
+                    while (head < queue.length) {
+                        const v = queue[head++];
                         component.push(v);
 
                         for (const neighbor of adjacency[v]) {
@@ -90,13 +125,13 @@ function splitByConnectedComponents() {
                 }
 
                 if (components.length <= 1) {
-                    $('loadingOverlay').style.display = 'none';
+                    showSplitLoading(false);
+                    setSplitStatus("Mesh hanya memiliki 1 bagian terhubung.");
                     return alert("Mesh hanya memiliki 1 bagian terhubung.\nTidak ada yang bisa di-split.");
                 }
 
-                dbg("✅ Ditemukan " + components.length + " connected components");
+                logSplit("✅ Ditemukan " + components.length + " connected components");
 
-                // === STEP 3: Buat entity baru untuk setiap component ===
                 const originalEntity = S.selected;
                 const originalPos = originalEntity.getPosition();
                 const originalRot = originalEntity.getEulerAngles();
@@ -105,84 +140,77 @@ function splitByConnectedComponents() {
                 const newEntities = [];
 
                 components.forEach((componentVertices, idx) => {
-                    // Vertex mapping: old index → new index
                     const vertexMap = new Map();
                     componentVertices.forEach((oldIdx, newIdx) => {
                         vertexMap.set(oldIdx, newIdx);
                     });
 
-                    // Extract data untuk component ini
                     const newPositions = new Float32Array(componentVertices.length * 3);
                     const newNormals = normals ? new Float32Array(componentVertices.length * 3) : null;
                     const newUvs = uvs ? new Float32Array(componentVertices.length * 2) : null;
 
                     componentVertices.forEach((oldIdx, newIdx) => {
-                        newPositions[newIdx * 3]     = positions[oldIdx * 3];
-                        newPositions[newIdx * 3 + 1] = positions[oldIdx * 3 + 1];
-                        newPositions[newIdx * 3 + 2] = positions[oldIdx * 3 + 2];
+                        newPositions[newIdx * 3] = positions[oldIdx * 3] || 0;
+                        newPositions[newIdx * 3 + 1] = positions[oldIdx * 3 + 1] || 0;
+                        newPositions[newIdx * 3 + 2] = positions[oldIdx * 3 + 2] || 0;
 
                         if (newNormals) {
-                            newNormals[newIdx * 3]     = normals[oldIdx * 3];
-                            newNormals[newIdx * 3 + 1] = normals[oldIdx * 3 + 1];
-                            newNormals[newIdx * 3 + 2] = normals[oldIdx * 3 + 2];
+                            newNormals[newIdx * 3] = normals[oldIdx * 3] || 0;
+                            newNormals[newIdx * 3 + 1] = normals[oldIdx * 3 + 1] || 0;
+                            newNormals[newIdx * 3 + 2] = normals[oldIdx * 3 + 2] || 0;
                         }
 
                         if (newUvs) {
-                            newUvs[newIdx * 2]     = uvs[oldIdx * 2];
-                            newUvs[newIdx * 2 + 1] = uvs[oldIdx * 2 + 1];
+                            newUvs[newIdx * 2] = uvs[oldIdx * 2] || 0;
+                            newUvs[newIdx * 2 + 1] = uvs[oldIdx * 2 + 1] || 0;
                         }
                     });
 
-                    // Extract indices (hanya triangle yang semua vertex-nya ada di component)
                     const newIndices = [];
-                    for (let i = 0; i < indices.length; i += 3) {
-                        const a = indices[i], b = indices[i+1], c = indices[i+2];
+                    let maxMappedIdx = 0;
+                    for (let i = 0; i < triLimit; i += 3) {
+                        const a = indices[i], b = indices[i + 1], c = indices[i + 2];
                         if (vertexMap.has(a) && vertexMap.has(b) && vertexMap.has(c)) {
-                            newIndices.push(vertexMap.get(a), vertexMap.get(b), vertexMap.get(c));
+                            const na = vertexMap.get(a);
+                            const nb = vertexMap.get(b);
+                            const nc = vertexMap.get(c);
+                            if (na > maxMappedIdx) maxMappedIdx = na;
+                            if (nb > maxMappedIdx) maxMappedIdx = nb;
+                            if (nc > maxMappedIdx) maxMappedIdx = nc;
+                            newIndices.push(na, nb, nc);
                         }
                     }
 
                     if (newIndices.length === 0) return;
 
-                    // Buat mesh baru
                     const newMesh = new pc.Mesh(app.graphicsDevice);
                     newMesh.setPositions(newPositions);
-                    if (newIndices.length > 65535) {
+                    if (maxMappedIdx > 65535) {
                         newMesh.setIndices(new Uint32Array(newIndices));
                     } else {
                         newMesh.setIndices(new Uint16Array(newIndices));
                     }
                     if (newNormals) newMesh.setNormals(newNormals);
-                    else newMesh.calculateNormals();
+                    else if (typeof newMesh.calculateNormals === 'function') newMesh.calculateNormals();
                     if (newUvs) newMesh.setUvs(0, newUvs);
                     newMesh.update(pc.PRIMITIVE_TRIANGLES);
 
-                    // Clone material dari original
-                    let newMat;
-                    if (mi.material) {
-                        newMat = Array.isArray(mi.material) ? mi.material[0].clone() : mi.material.clone();
-                    } else {
-                        newMat = new pc.StandardMaterial();
-                        newMat.diffuse = new pc.Color(0.6, 0.2, 0.8);
-                        newMat.update();
-                    }
-
-                    // Buat entity baru
-                    const newEntity = new pc.Entity(originalEntity.name + '-part' + (idx + 1));
+                    const newMat = cloneSplitMaterial(mi.material);
+                    const newEntity = new pc.Entity((originalEntity.name || "Obj") + '-part' + (idx + 1));
                     newEntity.addComponent('render', { type: 'asset', castShadows: false });
 
                     const newMi = new pc.MeshInstance(newMesh, newMat);
-                    newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+                    if (typeof pc.BoundingBox !== 'undefined') {
+                        newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+                    }
                     newEntity.render.meshInstances = [newMi];
 
-                    // Copy transform dari original
                     newEntity.setPosition(originalPos.x, originalPos.y, originalPos.z);
                     newEntity.setEulerAngles(originalRot.x, originalRot.y, originalRot.z);
                     newEntity.setLocalScale(originalScale.x, originalScale.y, originalScale.z);
                     newEntity._baseScale = newEntity.getLocalScale().clone();
                     newEntity._baseRot = newEntity.getEulerAngles().clone();
 
-                    // Cache mesh data untuk save/load
                     newEntity._meshCache = [{
                         pos: Array.from(newPositions),
                         idx: newIndices,
@@ -194,54 +222,51 @@ function splitByConnectedComponents() {
                     S.objects.push(newEntity);
                     newEntities.push(newEntity);
 
-                    dbg("✅ Part " + (idx + 1) + ": " + componentVertices.length + " vertices, " + (newIndices.length / 3) + " triangles");
+                    logSplit("✅ Part " + (idx + 1) + ": " + componentVertices.length + " vertices, " + (newIndices.length / 3) + " triangles");
                 });
 
-                // === STEP 4: Hapus entity original ===
-                const toDelete = S.selected;
-                selectObject(null);
+                const toDelete = originalEntity;
+                if (typeof selectObject === 'function') selectObject(null);
                 S.objects = S.objects.filter(o => o !== toDelete);
-                try {
-                    toDelete.enabled = false;
-                    if (toDelete.parent) toDelete.parent.removeChild(toDelete);
-                    toDelete.destroy();
-                } catch (err) {
-                    dbg("Destroy original error: " + err.message);
+                if (typeof destroyEntity === 'function') {
+                    destroyEntity(toDelete);
+                } else {
+                    try {
+                        toDelete.enabled = false;
+                        if (toDelete.parent) toDelete.parent.removeChild(toDelete);
+                        if (typeof toDelete.destroy === 'function') toDelete.destroy();
+                    } catch (err) {
+                        logSplit("Destroy original error: " + err.message);
+                    }
                 }
 
-                saveState();
-                updateTree();
+                if (typeof saveState === 'function') saveState();
+                if (typeof updateTree === 'function') updateTree();
 
-                // Select part pertama
-                if (newEntities.length > 0) {
+                if (newEntities.length > 0 && typeof selectObject === 'function') {
                     selectObject(newEntities[0]);
                 }
 
-                $('loadingOverlay').style.display = 'none';
-                $('status').textContent = "✓ Mesh di-split menjadi " + newEntities.length + " bagian";
-
+                showSplitLoading(false);
+                setSplitStatus("✓ Mesh di-split menjadi " + newEntities.length + " bagian");
             } catch (innerErr) {
-                dbg("Split inner error: " + innerErr.message + "\n" + (innerErr.stack || ""));
-                $('loadingOverlay').style.display = 'none';
+                logSplit("Split inner error: " + innerErr.message + "\n" + (innerErr.stack || ""));
+                showSplitLoading(false);
                 alert("Gagal split mesh: " + innerErr.message);
             }
         }, 50);
-
     } catch (e) {
-        dbg("Split error: " + e.message + "\n" + (e.stack || ""));
-        $('loadingOverlay').style.display = 'none';
+        logSplit("Split error: " + e.message + "\n" + (e.stack || ""));
+        showSplitLoading(false);
         alert("Gagal split mesh: " + e.message);
     }
 }
+window.splitByConnectedComponents = splitByConnectedComponents;
 
-/**
- * SPLIT BY MATERIAL
- * Memisahkan mesh instances yang berbeda material menjadi entity terpisah
- */
 function splitByMaterial() {
     if (!S.selected) return alert("Pilih objek dulu!");
 
-    const renderComp = S.selected.findComponent('render');
+    const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
     if (!renderComp || !renderComp.meshInstances) {
         return alert("Objek tidak memiliki mesh!");
     }
@@ -250,7 +275,7 @@ function splitByMaterial() {
         return alert("Mesh hanya memiliki 1 material.\nTidak ada yang bisa di-split berdasarkan material.");
     }
 
-    const hasSkin = renderComp.meshInstances.some(mi => mi.skinInstance != null);
+    const hasSkin = renderComp.meshInstances.some(mi => mi && mi.skinInstance != null);
     if (hasSkin) {
         return alert("Model dengan skeleton (skinned) tidak bisa di-split.");
     }
@@ -263,33 +288,21 @@ function splitByMaterial() {
     const newEntities = [];
 
     renderComp.meshInstances.forEach((mi, idx) => {
-        if (!mi.mesh) return;
+        if (!mi || !mi.mesh) return;
 
-        const newEntity = new pc.Entity(originalEntity.name + '-mat' + (idx + 1));
+        const newEntity = new pc.Entity((originalEntity.name || "Obj") + '-mat' + (idx + 1));
         newEntity.addComponent('render', { type: 'asset', castShadows: false });
 
-        // Clone mesh
-        const newMesh = new pc.Mesh(app.graphicsDevice);
-        try {
-            if (mi.mesh.getPositions()) newMesh.setPositions(mi.mesh.getPositions());
-            if (mi.mesh.getIndices()) newMesh.setIndices(mi.mesh.getIndices());
-            if (mi.mesh.getUvs()) newMesh.setUvs(0, mi.mesh.getUvs());
-            if (mi.mesh.getNormals()) newMesh.setNormals(mi.mesh.getNormals());
-            else newMesh.calculateNormals();
-            newMesh.update(pc.PRIMITIVE_TRIANGLES);
-        } catch(e) {
-            dbg("Clone mesh warning: " + e.message);
-            return;
-        }
+        const newMesh = (typeof cloneMesh === 'function') ? cloneMesh(mi.mesh) : null;
+        if (!newMesh) return;
 
-        // Clone material
-        const newMat = mi.material ? (Array.isArray(mi.material) ? mi.material[0].clone() : mi.material.clone()) : new pc.StandardMaterial();
-
+        const newMat = cloneSplitMaterial(mi.material);
         const newMi = new pc.MeshInstance(newMesh, newMat);
-        newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+        if (typeof pc.BoundingBox !== 'undefined') {
+            newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+        }
         newEntity.render.meshInstances = [newMi];
 
-        // Copy transform
         newEntity.setPosition(originalPos.x, originalPos.y, originalPos.z);
         newEntity.setEulerAngles(originalRot.x, originalRot.y, originalRot.z);
         newEntity.setLocalScale(originalScale.x, originalScale.y, originalScale.z);
@@ -301,30 +314,36 @@ function splitByMaterial() {
         newEntities.push(newEntity);
     });
 
-    // Hapus original
-    const toDelete = S.selected;
-    selectObject(null);
+    const toDelete = originalEntity;
+    if (typeof selectObject === 'function') selectObject(null);
     S.objects = S.objects.filter(o => o !== toDelete);
-    try {
-        toDelete.enabled = false;
-        if (toDelete.parent) toDelete.parent.removeChild(toDelete);
-        toDelete.destroy();
-    } catch (err) {
-        dbg("Destroy original error: " + err.message);
+    if (typeof destroyEntity === 'function') {
+        destroyEntity(toDelete);
+    } else {
+        try {
+            toDelete.enabled = false;
+            if (toDelete.parent) toDelete.parent.removeChild(toDelete);
+            if (typeof toDelete.destroy === 'function') toDelete.destroy();
+        } catch (err) {
+            logSplit("Destroy original error: " + err.message);
+        }
     }
 
-    saveState();
-    updateTree();
+    if (typeof saveState === 'function') saveState();
+    if (typeof updateTree === 'function') updateTree();
 
-    if (newEntities.length > 0) {
+    if (newEntities.length > 0 && typeof selectObject === 'function') {
         selectObject(newEntities[0]);
     }
 
-    $('status').textContent = "✓ Mesh di-split menjadi " + newEntities.length + " bagian berdasarkan material";
+    setSplitStatus("✓ Mesh di-split menjadi " + newEntities.length + " bagian berdasarkan material");
 }
+window.splitByMaterial = splitByMaterial;
 
-// === UI BINDINGS ===
-if ($('splitConnected')) $('splitConnected').onclick = splitByConnectedComponents;
-if ($('splitMaterial')) $('splitMaterial').onclick = splitByMaterial;
+const splitConnBtn = document.getElementById('splitConnected');
+if (splitConnBtn) splitConnBtn.onclick = splitByConnectedComponents;
 
-dbg("✅ split.js loaded");
+const splitMatBtn = document.getElementById('splitMaterial');
+if (splitMatBtn) splitMatBtn.onclick = splitByMaterial;
+
+logSplit("✅ split.js loaded");
