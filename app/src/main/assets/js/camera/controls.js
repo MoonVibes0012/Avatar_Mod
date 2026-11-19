@@ -1,12 +1,5 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
-/* FULL REPLACE — Kamera orbit + panel buka/tutup.
-   Masalah di versi lama (dari yang kebaca di app.html / style.css):
-   - Tombol #parts / #inspector gak punya data-panel, jadi nasib panel ngandelin file ini doang.
-   - Kalau file ini gagal / app belum ada, panel gak bisa dibuka sama sekali.
-   - Kamera gak ada guard: kalau entity Camera belum ada, langsung error.
-   File ini: guard semua, retry kalau app belum ada, panel pakai __vtfSetPanel
-   dari app.html baru kalau ada (biar gak dobel toggle), fallback sendiri kalau gak ada.
-   Gak ngandelin global $ / S / dbg — semua di-guard. */
+/* FULL REPLACE — Kamera orbit + panel buka/tutup dengan sinkronisasi pivot/camera. */
 
 (function () {
 'use strict';
@@ -18,9 +11,8 @@ function log(msg) {
     else if (typeof console !== 'undefined') { console.log(msg); }
 }
 
-// ---------- PANEL (fallback, kalau app.html lama tanpa boot script) ----------
+// ---------- PANEL (fallback, kalau app.html tanpa __vtfSetPanel) ----------
 function setPanelFallback(id, open) {
-    // Kalau app.html baru udah punya __vtfSetPanel, pakai itu — jangan dobel.
     if (typeof window.__vtfSetPanel === 'function') {
         window.__vtfSetPanel(id, open);
         return;
@@ -39,7 +31,6 @@ function setPanelFallback(id, open) {
 }
 
 function setupPanels() {
-    // Cegah dobel bind kalau file ini ke-load 2x
     if (window.__vtfPanelsBound) return;
     window.__vtfPanelsBound = true;
 
@@ -63,7 +54,6 @@ function setupPanels() {
         setPanelFallback('left', false);
         setPanelFallback('right', false);
     });
-    // ESC nutup panel — enak di HP pakai keyboard / desktop
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
             setPanelFallback('left', false);
@@ -75,21 +65,21 @@ function setupPanels() {
 // ---------- KAMERA ----------
 var CameraControls = {
     camera: null,
+    pivot: null,
     canvas: null,
     app: null,
     enabled: true,
 
-    // State orbit — disimpan di sini, bukan dibaca dari kamera tiap frame (biar gak drift kayak sway dulu)
-    yaw: 0,          // derajat, 0 = dari depan
-    pitch: 12,       // derajat, positif = dari atas dikit
-    distance: 4.5,   // jarak ke target
-    target: { x: 0, y: 1.1, z: 0 }, // target default: tengah karakter (kira-kira dada)
+    yaw: 0,
+    pitch: 12,
+    distance: 4.5,
+    target: { x: 0, y: 1.1, z: 0 },
 
     minDistance: 0.8,
     maxDistance: 12,
     minPitch: -60,
     maxPitch: 80,
-    rotateSpeed: 0.35, // derajat per px
+    rotateSpeed: 0.35,
     zoomSpeed: 0.0025,
     panSpeed: 0.002,
 
@@ -104,21 +94,27 @@ var CameraControls = {
     init: function (app) {
         if (!app) return false;
         this.app = app;
-        // Cari kamera: nama 'Camera' dulu, kalau gak ada cari entity pertama yang punya komponen camera
+
         var cam = null;
+        var piv = null;
         try {
             if (app.root) {
-                cam = app.root.findByName('Camera') || app.root.findByName('camera');
+                piv = app.root.findByName('cameraPivot') || app.root.findByName('CameraPivot') || null;
+                cam = app.root.findByName('camera') || app.root.findByName('Camera') || null;
                 if (!cam && typeof app.root.findComponents === 'function') {
                     var cams = app.root.findComponents('camera');
                     if (cams && cams.length) cam = cams[0].entity;
                 }
             }
-        } catch (e) { cam = null; }
+        } catch (e) {
+            cam = null;
+            piv = null;
+        }
         if (!cam) return false;
-        this.camera = cam;
 
-        // Baca posisi awal kamera jadi yaw/pitch/distance awal — sekali di sini, bukan tiap frame
+        this.camera = cam;
+        this.pivot = piv;
+
         try {
             var pos = cam.getPosition();
             var dx = pos.x - this.target.x;
@@ -143,12 +139,9 @@ var CameraControls = {
         var canvas = this.canvas;
         var self = this;
 
-        // Biar browser gak nge-scroll / zoom halaman pas geser canvas di HP
         canvas.style.touchAction = 'none';
-
         canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
-        // --- Mouse: kiri = putar, kanan / tengah = geser (pan), wheel = zoom ---
         canvas.addEventListener('mousedown', function (e) {
             if (!self.enabled) return;
             self._dragging = true;
@@ -173,11 +166,9 @@ var CameraControls = {
         canvas.addEventListener('wheel', function (e) {
             if (!self.enabled) return;
             e.preventDefault();
-            // deltaY positif = scroll bawah = zoom out
             self._zoom(e.deltaY * self.zoomSpeed * self.distance);
         }, { passive: false });
 
-        // --- Touch: 1 jari = putar, 2 jari = pinch zoom + geser ---
         canvas.addEventListener('touchstart', function (e) {
             if (!self.enabled) return;
             if (e.touches.length === 1) {
@@ -193,8 +184,6 @@ var CameraControls = {
 
         canvas.addEventListener('touchmove', function (e) {
             if (!self.enabled) return;
-            // FIX: cegah halaman ke-scroll pas geser canvas. touchstart passive:true boleh,
-            // tapi touchmove harus preventDefault + passive:false biar beneran kecegah.
             e.preventDefault();
             if (e.touches.length === 1 && self._dragging) {
                 var dx = e.touches[0].clientX - self._lastX;
@@ -205,7 +194,6 @@ var CameraControls = {
             } else if (e.touches.length === 2) {
                 var nd = self._dist(e.touches[0], e.touches[1]);
                 if (self._pinchDist > 0) {
-                    // Pinch merapat = zoom out, melebar = zoom in
                     self._zoom((self._pinchDist - nd) * 0.01 * self.distance);
                 }
                 self._pinchDist = nd;
@@ -222,10 +210,8 @@ var CameraControls = {
             if (e.touches.length === 0) self._dragging = false;
         });
 
-        // Double-click / double-tap = reset kamera
         canvas.addEventListener('dblclick', function () { self.reset(); });
 
-        // Resize: biar canvas gak ke-stretch (bug di app.html lama: CSS 100% vs attribute)
         window.addEventListener('resize', function () { self._resize(); });
         this._resize();
     },
@@ -245,7 +231,6 @@ var CameraControls = {
         this.apply();
     },
     _zoom: function (delta) {
-        // delta positif = menjauh
         this.distance += delta;
         if (this.distance < this.minDistance) this.distance = this.minDistance;
         if (this.distance > this.maxDistance) this.distance = this.maxDistance;
@@ -253,11 +238,10 @@ var CameraControls = {
     },
     _pan: function (dx, dy) {
         if (!this.camera) return;
-        // Geser target di bidang layar kamera, bukan dunia mentah-mentah
         var right = { x: 0, y: 0, z: 0 };
         var up = { x: 0, y: 0, z: 0 };
         try {
-            var r = this.camera.right; // PlayCanvas: entity.right = vektor kanan dunia
+            var r = this.camera.right;
             var u = this.camera.up;
             right = { x: r.x, y: r.y, z: r.z };
             up = { x: u.x, y: u.y, z: u.z };
@@ -272,7 +256,6 @@ var CameraControls = {
         var app = this.app;
         if (!app || !app.graphicsDevice) return;
         try {
-            // PlayCanvas: resizeCanvas pakai ukuran client canvas, bukan window mentah
             var canvas = this.canvas;
             var w = canvas ? canvas.clientWidth : window.innerWidth;
             var h = canvas ? canvas.clientHeight : window.innerHeight;
@@ -280,7 +263,6 @@ var CameraControls = {
         } catch (e) {}
     },
 
-    // Hitung posisi kamera dari yaw/pitch/distance/target — SATU tempat, biar konsisten
     apply: function () {
         if (!this.camera) return;
         var yawR = this.yaw * Math.PI / 180;
@@ -289,8 +271,15 @@ var CameraControls = {
         var y = this.target.y + this.distance * Math.sin(pitchR);
         var z = this.target.z + this.distance * Math.cos(pitchR) * Math.cos(yawR);
         try {
-            this.camera.setPosition(x, y, z);
-            this.camera.lookAt(this.target.x, this.target.y, this.target.z);
+            if (this.pivot && this.camera.parent === this.pivot) {
+                this.pivot.setPosition(this.target.x, this.target.y, this.target.z);
+                this.pivot.setEulerAngles(0, 0, 0);
+                this.camera.setPosition(x, y, z);
+                this.camera.lookAt(this.target.x, this.target.y, this.target.z);
+            } else {
+                this.camera.setPosition(x, y, z);
+                this.camera.lookAt(this.target.x, this.target.y, this.target.z);
+            }
         } catch (e) {}
     },
 
@@ -302,7 +291,6 @@ var CameraControls = {
         this.apply();
     },
 
-    // Dipanggil dari luar (misal tombol Focus di inspector): arahkan target ke objek
     focusOn: function (entity) {
         if (!entity) return;
         try {
@@ -315,7 +303,6 @@ var CameraControls = {
 
 window.CameraControls = CameraControls;
 
-// ---------- INIT: panel langsung, kamera nunggu app ----------
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', setupPanels);
 } else {
@@ -325,19 +312,16 @@ if (document.readyState === 'loading') {
 function tryInitCamera() {
     var app = getApp();
     if (!app) return false;
-    // Kalau init.js bikin app tapi kamera belum ada (belum load scene), retry.
-    if (CameraControls.init(app)) return true;
-    return false;
+    return CameraControls.init(app);
 }
 if (!tryInitCamera()) {
     var tries = 0;
     var timer = setInterval(function () {
         tries++;
-        if (tryInitCamera() || tries > 100) clearInterval(timer); // ~10 detik
+        if (tryInitCamera() || tries > 100) clearInterval(timer);
     }, 100);
 }
 
-// Tombol Focus di inspector (#focusBtn) — kalau select.js belum bind, kita backup di sini
 document.addEventListener('click', function (e) {
     if (e.target && e.target.id === 'focusBtn') {
         var sel = (typeof window.S !== 'undefined' && window.S) ? window.S.selected : null;
