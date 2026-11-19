@@ -1,341 +1,349 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
-// Camera orbit, zoom, raycast, dan touch gestures
-// FIX: Lazy initialization untuk menghindari "pc is not defined" saat PlayCanvas belum load
+/* FULL REPLACE — Kamera orbit + panel buka/tutup.
+   Masalah di versi lama (dari yang kebaca di app.html / style.css):
+   - Tombol #parts / #inspector gak punya data-panel, jadi nasib panel ngandelin file ini doang.
+   - Kalau file ini gagal / app belum ada, panel gak bisa dibuka sama sekali.
+   - Kamera gak ada guard: kalau entity Camera belum ada, langsung error.
+   File ini: guard semua, retry kalau app belum ada, panel pakai __vtfSetPanel
+   dari app.html baru kalau ada (biar gak dobel toggle), fallback sendiri kalau gak ada.
+   Gak ngandelin global $ / S / dbg — semua di-guard. */
 
-// Declare variabel di global scope (akan di-init nanti)
-let tempVec, targetYaw = 0, targetPitch = -15, targetDist = 6;
-let currentYaw = 0, currentPitch = -15, currentDist = 6;
-let targetPivotPos, currentPivotPos;
-let isDragging = false, prevX = 0, prevY = 0;
-let tapStartTime = 0, tapStartX = 0, tapStartY = 0;
-let initialPinchDist = 0, initialTargetDist = 6, wasPinching = false;
-let invMat, localRay, intersection;
-let time = 0;
-let EDGE_DEAD_ZONE = 18;
-let controlsInitialized = false;
+(function () {
+'use strict';
 
-function initControls() {
-    if (controlsInitialized) return;
-    // Tunggu sampai pc, app, dan canvas tersedia
-    if (typeof pc === 'undefined' || typeof app === 'undefined' || typeof canvas === 'undefined') {
-        setTimeout(initControls, 100);
+function $(id) { return document.getElementById(id); }
+function getApp() { return (typeof window.app !== 'undefined' && window.app) ? window.app : null; }
+function log(msg) {
+    if (typeof window.dbg === 'function') { try { window.dbg(msg); } catch (e) {} }
+    else if (typeof console !== 'undefined') { console.log(msg); }
+}
+
+// ---------- PANEL (fallback, kalau app.html lama tanpa boot script) ----------
+function setPanelFallback(id, open) {
+    // Kalau app.html baru udah punya __vtfSetPanel, pakai itu — jangan dobel.
+    if (typeof window.__vtfSetPanel === 'function') {
+        window.__vtfSetPanel(id, open);
         return;
     }
-    
-    controlsInitialized = true;
-    
-    // Init variabel yang butuh pc
-    tempVec = new pc.Vec3();
-    targetPivotPos = new pc.Vec3(0, 1, 0);
-    currentPivotPos = new pc.Vec3(0, 1, 0);
-    invMat = new pc.Mat4();
-    localRay = new pc.Ray();
-    intersection = new pc.Vec3();
-    EDGE_DEAD_ZONE = window.innerWidth > 400 ? 18 : 14;
-    
-    // Camera update loop
-    app.on('update', (dt) => {
-        updateCamera(dt);
-        time = (time + dt) % 1000;
-        S.objects.forEach(obj => {
-            if (!obj || obj._destroyed) return;
-            if (obj._animSpin) obj.rotate(0, 90 * dt, 0);
-            if (obj._animPulse) {
-                if (!obj._baseScale) obj._baseScale = obj.getLocalScale().clone();
-                const sf = 1 + Math.sin(time * 4) * 0.05;
-                obj.setLocalScale(obj._baseScale.x * sf, obj._baseScale.y * sf, obj._baseScale.z * sf);
-            }
-            if (obj._animWobble) {
-                if (!obj._baseRot) obj._baseRot = obj.getEulerAngles().clone();
-                obj.setEulerAngles(obj._baseRot.x, obj._baseRot.y, obj._baseRot.z + Math.sin(time * 5) * 10);
-            }
+    var panel = $(id);
+    if (!panel) return;
+    panel.classList.toggle('mobile-open', !!open);
+    panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+    var backdrop = $('panelBackdrop');
+    if (backdrop) {
+        var anyOpen = !!document.querySelector('.panel.mobile-open');
+        backdrop.hidden = !anyOpen;
+    }
+    var btn = (id === 'left') ? $('parts') : $('inspector');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function setupPanels() {
+    // Cegah dobel bind kalau file ini ke-load 2x
+    if (window.__vtfPanelsBound) return;
+    window.__vtfPanelsBound = true;
+
+    var parts = $('parts');
+    if (parts) parts.addEventListener('click', function () {
+        var p = $('left');
+        setPanelFallback('left', p ? !p.classList.contains('mobile-open') : true);
+    });
+    var inspector = $('inspector');
+    if (inspector) inspector.addEventListener('click', function () {
+        var p = $('right');
+        setPanelFallback('right', p ? !p.classList.contains('mobile-open') : true);
+    });
+    document.querySelectorAll('.btn-close-panel').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            setPanelFallback(btn.getAttribute('data-panel'), false);
         });
     });
-    
-    // Setup event listeners
-    setupMouseEvents();
-    setupTouchEvents();
-    setupFocusButton();
-    
-    dbg("✅ controls.js loaded (with lazy init)");
-}
-
-function updateCamera(dt) {
-    const safeDt = Math.min(typeof dt === 'number' && isFinite(dt) && dt > 0 ? dt : 1 / 60, 0.05);
-    const alpha = 1 - Math.exp(-10 * safeDt);
-    currentYaw = pc.math.lerp(currentYaw, targetYaw, alpha);
-    currentPitch = pc.math.lerp(currentPitch, targetPitch, alpha);
-    currentDist = pc.math.lerp(currentDist, targetDist, alpha);
-    currentPivotPos.lerp(currentPivotPos, targetPivotPos, alpha);
-    pivot.setPosition(currentPivotPos);
-    pivot.setLocalEulerAngles(currentPitch, currentYaw, 0);
-    camera.setLocalPosition(0, 1.5, currentDist);
-}
-
-function setupMouseEvents() {
-    canvas.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        prevX = e.clientX; prevY = e.clientY;
-        tapStartTime = performance.now();
-        tapStartX = e.clientX; tapStartY = e.clientY;
+    var backdrop = $('panelBackdrop');
+    if (backdrop) backdrop.addEventListener('click', function () {
+        setPanelFallback('left', false);
+        setPanelFallback('right', false);
     });
-    
-    window.addEventListener('mouseup', (e) => {
-        if (isDragging) {
-            isDragging = false;
-            if (performance.now() - tapStartTime < 500 &&
-                Math.hypot(e.clientX - tapStartX, e.clientY - tapStartY) < 30) {
-                doRaycast(e.clientX, e.clientY);
-            }
+    // ESC nutup panel — enak di HP pakai keyboard / desktop
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            setPanelFallback('left', false);
+            setPanelFallback('right', false);
         }
-    });
-    
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dx = e.clientX - prevX, dy = e.clientY - prevY;
-        prevX = e.clientX; prevY = e.clientY;
-        targetYaw -= dx * 0.5;
-        targetPitch = Math.max(-80, Math.min(80, targetPitch - dy * 0.5));
-    });
-    
-    canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        targetDist += e.deltaY * 0.05;
-        targetDist = Math.max(2, Math.min(150, targetDist));
-    }, { passive: false });
-}
-
-function setupTouchEvents() {
-    canvas.addEventListener('touchstart', (e) => {
-        if (e.touches.length > 2) return;
-        if (e.touches[0].radiusX && e.touches[0].radiusX > 40) return;
-        if (e.touches[0].clientX < EDGE_DEAD_ZONE ||
-            e.touches[0].clientX > window.innerWidth - EDGE_DEAD_ZONE) return;
-        e.stopPropagation(); e.preventDefault();
-        
-        if (e.touches.length === 1) {
-            wasPinching = false;
-            isDragging = true;
-            prevX = e.touches[0].clientX; prevY = e.touches[0].clientY;
-            tapStartTime = performance.now();
-            tapStartX = e.touches[0].clientX; tapStartY = e.touches[0].clientY;
-            initialPinchDist = 0;
-        } else if (e.touches.length === 2) {
-            wasPinching = true;
-            isDragging = false;
-            initialPinchDist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX, 
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            initialTargetDist = targetDist;
-        }
-    }, { passive: false });
-    
-    canvas.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 2) return;
-        e.stopPropagation(); e.preventDefault();
-        
-        if (e.touches.length === 1 && isDragging) {
-            const dx = e.touches[0].clientX - prevX, dy = e.touches[0].clientY - prevY;
-            prevX = e.touches[0].clientX; prevY = e.touches[0].clientY;
-            targetYaw -= dx * 0.5;
-            targetPitch = Math.max(-80, Math.min(80, targetPitch - dy * 0.5));
-        } else if (e.touches.length === 2 && initialPinchDist > 0) {
-            const currentPinchDist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX, 
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            if (currentPinchDist > 0) {
-                targetDist = Math.max(2, Math.min(150, initialTargetDist * (initialPinchDist / currentPinchDist)));
-            }
-        }
-    }, { passive: false });
-    
-    canvas.addEventListener('touchend', (e) => {
-        e.stopPropagation();
-        if (!wasPinching && e.changedTouches.length === 1) {
-            const t = e.changedTouches[0];
-            if (performance.now() - tapStartTime < 500 &&
-                Math.hypot(t.clientX - tapStartX, t.clientY - tapStartY) < 30) {
-                doRaycast(t.clientX, t.clientY);
-            }
-        }
-        isDragging = false;
-        initialPinchDist = 0;
-        if (e.touches.length === 0) {
-            wasPinching = false;
-        } else if (e.touches.length === 1 && !wasPinching) {
-            isDragging = true;
-            prevX = e.touches[0].clientX; prevY = e.touches[0].clientY;
-            tapStartTime = performance.now();
-            tapStartX = e.touches[0].clientX; tapStartY = e.touches[0].clientY;
-        }
-    });
-    
-    canvas.addEventListener('touchcancel', () => {
-        window.resetCameraGesture();
-    });
-    
-    window.addEventListener('resize', () => {
-        EDGE_DEAD_ZONE = window.innerWidth > 400 ? 18 : 14;
     });
 }
 
-function setupFocusButton() {
-    if ($('focusBtn')) {
-        $('focusBtn').onclick = () => {
-            if (!S.selected) return alert("Pilih objek dulu!");
-            try {
-                const mi = S.selected.findComponent('render')?.meshInstances[0];
-                if (mi && mi.aabb) {
-                    const wScale = S.selected.getWorldTransform().getScale();
-                    const maxScale = Math.max(wScale.x, wScale.y, wScale.z);
-                    const size = mi.aabb.halfExtents.length() * maxScale;
-                    targetDist = Math.max(0.5, Math.min(150, size * 3.5));
-                    const center = new pc.Vec3();
-                    S.selected.getWorldTransform().transformPoint(mi.aabb.center, center);
-                    targetPivotPos.set(center.x, center.y, center.z);
-                    $('status').textContent = "Fokus ke mesh objek.";
-                } else {
-                    targetDist = 6;
-                    const p = S.selected.getPosition();
-                    targetPivotPos.set(p.x, p.y, p.z);
-                    $('status').textContent = "Fokus ke posisi objek (mesh belum siap).";
+// ---------- KAMERA ----------
+var CameraControls = {
+    camera: null,
+    canvas: null,
+    app: null,
+    enabled: true,
+
+    // State orbit — disimpan di sini, bukan dibaca dari kamera tiap frame (biar gak drift kayak sway dulu)
+    yaw: 0,          // derajat, 0 = dari depan
+    pitch: 12,       // derajat, positif = dari atas dikit
+    distance: 4.5,   // jarak ke target
+    target: { x: 0, y: 1.1, z: 0 }, // target default: tengah karakter (kira-kira dada)
+
+    minDistance: 0.8,
+    maxDistance: 12,
+    minPitch: -60,
+    maxPitch: 80,
+    rotateSpeed: 0.35, // derajat per px
+    zoomSpeed: 0.0025,
+    panSpeed: 0.002,
+
+    _dragging: false,
+    _panning: false,
+    _lastX: 0,
+    _lastY: 0,
+    _pinchDist: 0,
+    _pinchMid: null,
+    _bound: false,
+
+    init: function (app) {
+        if (!app) return false;
+        this.app = app;
+        // Cari kamera: nama 'Camera' dulu, kalau gak ada cari entity pertama yang punya komponen camera
+        var cam = null;
+        try {
+            if (app.root) {
+                cam = app.root.findByName('Camera') || app.root.findByName('camera');
+                if (!cam && typeof app.root.findComponents === 'function') {
+                    var cams = app.root.findComponents('camera');
+                    if (cams && cams.length) cam = cams[0].entity;
                 }
-            } catch(e) {
-                targetDist = 6;
-                const p = S.selected.getPosition();
-                targetPivotPos.set(p.x, p.y, p.z);
             }
-        };
+        } catch (e) { cam = null; }
+        if (!cam) return false;
+        this.camera = cam;
+
+        // Baca posisi awal kamera jadi yaw/pitch/distance awal — sekali di sini, bukan tiap frame
+        try {
+            var pos = cam.getPosition();
+            var dx = pos.x - this.target.x;
+            var dy = pos.y - this.target.y;
+            var dz = pos.z - this.target.z;
+            this.distance = Math.sqrt(dx * dx + dy * dy + dz * dz) || this.distance;
+            this.yaw = Math.atan2(dx, dz) * 180 / Math.PI;
+            var horiz = Math.sqrt(dx * dx + dz * dz) || 0.0001;
+            this.pitch = Math.atan2(dy, horiz) * 180 / Math.PI;
+        } catch (e) {}
+
+        this.canvas = $('gl') || (app.graphicsDevice && app.graphicsDevice.canvas) || document.querySelector('canvas');
+        this._bind();
+        this.apply();
+        log('✅ Camera controls aktif');
+        return true;
+    },
+
+    _bind: function () {
+        if (this._bound || !this.canvas) return;
+        this._bound = true;
+        var canvas = this.canvas;
+        var self = this;
+
+        // Biar browser gak nge-scroll / zoom halaman pas geser canvas di HP
+        canvas.style.touchAction = 'none';
+
+        canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+        // --- Mouse: kiri = putar, kanan / tengah = geser (pan), wheel = zoom ---
+        canvas.addEventListener('mousedown', function (e) {
+            if (!self.enabled) return;
+            self._dragging = true;
+            self._panning = (e.button === 2 || e.button === 1);
+            self._lastX = e.clientX;
+            self._lastY = e.clientY;
+        });
+        window.addEventListener('mousemove', function (e) {
+            if (!self.enabled || !self._dragging) return;
+            var dx = e.clientX - self._lastX;
+            var dy = e.clientY - self._lastY;
+            self._lastX = e.clientX;
+            self._lastY = e.clientY;
+            if (self._panning) self._pan(dx, dy);
+            else self._rotate(dx, dy);
+        });
+        window.addEventListener('mouseup', function () {
+            self._dragging = false;
+            self._panning = false;
+        });
+
+        canvas.addEventListener('wheel', function (e) {
+            if (!self.enabled) return;
+            e.preventDefault();
+            // deltaY positif = scroll bawah = zoom out
+            self._zoom(e.deltaY * self.zoomSpeed * self.distance);
+        }, { passive: false });
+
+        // --- Touch: 1 jari = putar, 2 jari = pinch zoom + geser ---
+        canvas.addEventListener('touchstart', function (e) {
+            if (!self.enabled) return;
+            if (e.touches.length === 1) {
+                self._dragging = true;
+                self._lastX = e.touches[0].clientX;
+                self._lastY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                self._dragging = false;
+                self._pinchDist = self._dist(e.touches[0], e.touches[1]);
+                self._pinchMid = self._mid(e.touches[0], e.touches[1]);
+            }
+        }, { passive: true });
+
+        canvas.addEventListener('touchmove', function (e) {
+            if (!self.enabled) return;
+            // FIX: cegah halaman ke-scroll pas geser canvas. touchstart passive:true boleh,
+            // tapi touchmove harus preventDefault + passive:false biar beneran kecegah.
+            e.preventDefault();
+            if (e.touches.length === 1 && self._dragging) {
+                var dx = e.touches[0].clientX - self._lastX;
+                var dy = e.touches[0].clientY - self._lastY;
+                self._lastX = e.touches[0].clientX;
+                self._lastY = e.touches[0].clientY;
+                self._rotate(dx, dy);
+            } else if (e.touches.length === 2) {
+                var nd = self._dist(e.touches[0], e.touches[1]);
+                if (self._pinchDist > 0) {
+                    // Pinch merapat = zoom out, melebar = zoom in
+                    self._zoom((self._pinchDist - nd) * 0.01 * self.distance);
+                }
+                self._pinchDist = nd;
+                var mid = self._mid(e.touches[0], e.touches[1]);
+                if (self._pinchMid) {
+                    self._pan(mid.x - self._pinchMid.x, mid.y - self._pinchMid.y);
+                }
+                self._pinchMid = mid;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', function (e) {
+            if (e.touches.length < 2) { self._pinchDist = 0; self._pinchMid = null; }
+            if (e.touches.length === 0) self._dragging = false;
+        });
+
+        // Double-click / double-tap = reset kamera
+        canvas.addEventListener('dblclick', function () { self.reset(); });
+
+        // Resize: biar canvas gak ke-stretch (bug di app.html lama: CSS 100% vs attribute)
+        window.addEventListener('resize', function () { self._resize(); });
+        this._resize();
+    },
+
+    _dist: function (a, b) {
+        var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    },
+    _mid: function (a, b) {
+        return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    },
+    _rotate: function (dx, dy) {
+        this.yaw -= dx * this.rotateSpeed;
+        this.pitch += dy * this.rotateSpeed;
+        if (this.pitch < this.minPitch) this.pitch = this.minPitch;
+        if (this.pitch > this.maxPitch) this.pitch = this.maxPitch;
+        this.apply();
+    },
+    _zoom: function (delta) {
+        // delta positif = menjauh
+        this.distance += delta;
+        if (this.distance < this.minDistance) this.distance = this.minDistance;
+        if (this.distance > this.maxDistance) this.distance = this.maxDistance;
+        this.apply();
+    },
+    _pan: function (dx, dy) {
+        if (!this.camera) return;
+        // Geser target di bidang layar kamera, bukan dunia mentah-mentah
+        var right = { x: 0, y: 0, z: 0 };
+        var up = { x: 0, y: 0, z: 0 };
+        try {
+            var r = this.camera.right; // PlayCanvas: entity.right = vektor kanan dunia
+            var u = this.camera.up;
+            right = { x: r.x, y: r.y, z: r.z };
+            up = { x: u.x, y: u.y, z: u.z };
+        } catch (e) {}
+        var s = this.panSpeed * this.distance;
+        this.target.x += (-dx * s * right.x + dy * s * up.x);
+        this.target.y += (-dx * s * right.y + dy * s * up.y);
+        this.target.z += (-dx * s * right.z + dy * s * up.z);
+        this.apply();
+    },
+    _resize: function () {
+        var app = this.app;
+        if (!app || !app.graphicsDevice) return;
+        try {
+            // PlayCanvas: resizeCanvas pakai ukuran client canvas, bukan window mentah
+            var canvas = this.canvas;
+            var w = canvas ? canvas.clientWidth : window.innerWidth;
+            var h = canvas ? canvas.clientHeight : window.innerHeight;
+            if (w > 0 && h > 0 && typeof app.resizeCanvas === 'function') app.resizeCanvas(w, h);
+        } catch (e) {}
+    },
+
+    // Hitung posisi kamera dari yaw/pitch/distance/target — SATU tempat, biar konsisten
+    apply: function () {
+        if (!this.camera) return;
+        var yawR = this.yaw * Math.PI / 180;
+        var pitchR = this.pitch * Math.PI / 180;
+        var x = this.target.x + this.distance * Math.cos(pitchR) * Math.sin(yawR);
+        var y = this.target.y + this.distance * Math.sin(pitchR);
+        var z = this.target.z + this.distance * Math.cos(pitchR) * Math.cos(yawR);
+        try {
+            this.camera.setPosition(x, y, z);
+            this.camera.lookAt(this.target.x, this.target.y, this.target.z);
+        } catch (e) {}
+    },
+
+    reset: function () {
+        this.yaw = 0;
+        this.pitch = 12;
+        this.distance = 4.5;
+        this.target = { x: 0, y: 1.1, z: 0 };
+        this.apply();
+    },
+
+    // Dipanggil dari luar (misal tombol Focus di inspector): arahkan target ke objek
+    focusOn: function (entity) {
+        if (!entity) return;
+        try {
+            var pos = entity.getPosition();
+            this.target = { x: pos.x, y: pos.y, z: pos.z };
+            this.apply();
+        } catch (e) {}
     }
-}
-
-function doRaycast(x, y) {
-    if (!isAppReady || S.objects.length === 0) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const tapX = x - rect.left;
-    const tapY = y - rect.top;
-    
-    if (tapX < 0 || tapY < 0 || tapX > rect.width || tapY > rect.height) return;
-    
-    let hit = null;
-    let minDist = Infinity;
-    
-    // Method 1: AABB Raycast
-    try {
-        const start = camera.camera.screenToWorld(tapX, tapY, camera.camera.nearClip);
-        const end = camera.camera.screenToWorld(tapX, tapY, camera.camera.farClip);
-        if (!start || !end) return;
-        
-        const dir = new pc.Vec3();
-        dir.sub2(end, start).normalize();
-        const ray = new pc.Ray(start, dir);
-        
-        for (const obj of S.objects) {
-            if (!obj || obj._destroyed) continue;
-            const render = obj.findComponent('render');
-            if (!render || !render.meshInstances) continue;
-            
-            for (const mi of render.meshInstances) {
-                if (!mi.mesh) continue;
-                
-                try {
-                    if (!mi.aabb || isNaN(mi.aabb.center.x)) {
-                        try { mi.aabb = pc.BoundingBox.fromMesh(mi.mesh); } catch(e) { continue; }
-                    }
-                    
-                    const worldMat = obj.getWorldTransform();
-                    invMat.copy(worldMat);
-                    if (!invMat.invert()) continue;
-                    if (isNaN(invMat.data[0])) continue;
-                    
-                    invMat.transformPoint(ray.origin, localRay.origin);
-                    invMat.transformVector(ray.direction, localRay.direction);
-                    localRay.direction.normalize();
-                    
-                    if (mi.aabb.intersectsRay(localRay, intersection)) {
-                        worldMat.transformPoint(intersection, intersection);
-                        const dist = start.distance(intersection);
-                        if (dist < minDist && dist >= 0) {
-                            minDist = dist;
-                            hit = obj;
-                        }
-                    }
-                } catch (meshErr) {
-                    continue;
-                }
-            }
-        }
-    } catch (e) {
-        // Method 1 failed, try fallback
-    }
-    
-    // Method 2: Screen-space fallback
-    if (!hit) {
-        let minScreenDist = CONFIG.TAP_THRESHOLD;
-        
-        for (const obj of S.objects) {
-            if (!obj || obj._destroyed) continue;
-            try {
-                const mi = obj.findComponent('render')?.meshInstances[0];
-                let worldCenter = obj.getPosition().clone();
-                
-                if (mi && mi.aabb) {
-                    const worldMat = obj.getWorldTransform();
-                    worldCenter = new pc.Vec3();
-                    worldMat.transformPoint(mi.aabb.center, worldCenter);
-                }
-                
-                const screenPos = camera.camera.worldToScreen(worldCenter);
-                if (!screenPos) continue;
-                
-                const d = Math.hypot(screenPos.x - tapX, screenPos.y - tapY);
-                
-                let threshold = CONFIG.TAP_THRESHOLD;
-                if (mi && mi.aabb) {
-                    const extent = mi.aabb.halfExtents.length();
-                    const scale = obj.getWorldTransform().getScale();
-                    const maxScale = Math.max(scale.x, scale.y, scale.z);
-                    const worldSize = extent * maxScale;
-                    
-                    const distToCam = worldCenter.distance(camera.getPosition());
-                    if (distToCam > 0.1) {
-                        const fov = camera.camera.fov * Math.PI / 180;
-                        const screenSize = (worldSize / (distToCam * Math.tan(fov / 2))) * rect.height * 0.5;
-                        threshold = Math.max(30, Math.min(200, screenSize * 0.7));
-                    }
-                }
-                
-                if (d < threshold && d < minScreenDist) {
-                    minScreenDist = d;
-                    hit = obj;
-                }
-            } catch (objErr) {
-                continue;
-            }
-        }
-    }
-    
-    if (hit) {
-        selectObject(hit);
-        $('status').textContent = "✓ Terpilih: " + hit.name;
-    } else {
-        selectObject(null);
-        $('status').textContent = "Tidak ada objek di posisi tap";
-    }
-}
-
-// Expose functions to global scope
-window.updateCamera = updateCamera;
-window.zoomIn = function() { targetDist = Math.max(2, targetDist - 2); };
-window.zoomOut = function() { targetDist = Math.min(150, targetDist + 2); };
-window.resetCameraGesture = function() {
-    isDragging = false;
-    initialPinchDist = 0;
-    wasPinching = false;
 };
 
-// Init
-initControls();
+window.CameraControls = CameraControls;
+
+// ---------- INIT: panel langsung, kamera nunggu app ----------
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupPanels);
+} else {
+    setupPanels();
+}
+
+function tryInitCamera() {
+    var app = getApp();
+    if (!app) return false;
+    // Kalau init.js bikin app tapi kamera belum ada (belum load scene), retry.
+    if (CameraControls.init(app)) return true;
+    return false;
+}
+if (!tryInitCamera()) {
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries++;
+        if (tryInitCamera() || tries > 100) clearInterval(timer); // ~10 detik
+    }, 100);
+}
+
+// Tombol Focus di inspector (#focusBtn) — kalau select.js belum bind, kita backup di sini
+document.addEventListener('click', function (e) {
+    if (e.target && e.target.id === 'focusBtn') {
+        var sel = (typeof window.S !== 'undefined' && window.S) ? window.S.selected : null;
+        if (sel) CameraControls.focusOn(sel);
+    }
+});
+
+log('✅ controls.js loaded');
+})();
