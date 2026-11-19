@@ -72,7 +72,9 @@
                     <h3>File</h3>
                     <div class="grid">
                         <button type="button" id="importMenu">Import x-vrm/glb</button>
+                        <button type="button" id="loadSceneBtn">Load JSON</button>
                         <button type="button" id="x-vrm">Export VRM</button>
+                        <button type="button" id="obj">Export OBJ</button>
                     </div>
                 </div>
 
@@ -297,6 +299,20 @@
                     </div>
                 </div>
 
+                <!-- FACE TRACKING SETTINGS -->
+                <div id="faceTrackingSection" class="section">
+                    <h3>📷 Face Tracking</h3>
+                    <button type="button" id="btnFaceTrackToggle" style="width:100%; margin-bottom:6px;">Start / Stop Face Tracking</button>
+                    <div class="field">
+                        <label>Sensitivity <span id="faceSensitivityOut">1.00</span></label>
+                        <input type="range" id="faceSensitivity" min="0.1" max="2.5" step="0.05" value="1.0">
+                    </div>
+                    <div class="field">
+                        <label>Smoothing <span id="faceSmoothingOut">0.50</span></label>
+                        <input type="range" id="faceSmoothing" min="0" max="0.95" step="0.05" value="0.5">
+                    </div>
+                </div>
+
                 <!-- CHARACTER DRIVER PANEL -->
                 <div id="charDriverPanel" class="section" style="display:none;">
                     <h3>🎭 Character Driver</h3>
@@ -401,6 +417,8 @@
                 setPanel('left', false); setPanel('right', false);
             }
         });
+        var loadSceneBtn = $('loadSceneBtn'), jsonFileInp = $('jsonFile');
+        if (loadSceneBtn && jsonFileInp) loadSceneBtn.addEventListener('click', function () { jsonFileInp.click(); });
         var dbgBtn = $('btnDebug');
         if (dbgBtn) dbgBtn.addEventListener('click', function () {
             if (typeof window.toggleDebug === 'function') { window.toggleDebug(); return; }
