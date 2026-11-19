@@ -8,6 +8,9 @@ let faceSensitivity = 1.0;
 let faceSmoothing = 0.5;
 let faceRafId = null;
 
+const smoothedHead = { x: 0, y: 0, z: 0, initialized: false };
+const smoothedMorphs = new Map();
+
 function setFaceStatus(msg) {
     const el = document.getElementById('status');
     if (el) el.textContent = msg;
@@ -29,6 +32,28 @@ function getKalidokitFaceSolver() {
         return window.KalidoKit.Face;
     }
     return null;
+}
+
+function smoothValue(prev, next, smoothing) {
+    const s = Math.max(0, Math.min(0.95, Number(smoothing) || 0));
+    const alpha = 1 - s;
+    return prev + (next - prev) * alpha;
+}
+
+function resetFaceSmoothingState() {
+    smoothedHead.x = 0;
+    smoothedHead.y = 0;
+    smoothedHead.z = 0;
+    smoothedHead.initialized = false;
+    smoothedMorphs.clear();
+}
+
+function updateFaceTrackButtonStates() {
+    const ids = ['btnFaceTrack', 'btnFaceTrackToggle'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', !!isFaceTracking);
+    });
 }
 
 function initFaceMesh() {
@@ -89,9 +114,20 @@ function onFaceResults(results) {
         if (!face) return;
 
         if (face.head) {
-            const headX = (face.head.x || 0) * faceSensitivity * (180 / Math.PI);
-            const headY = (face.head.y || 0) * faceSensitivity * (180 / Math.PI);
-            const headZ = (face.head.z || 0) * faceSensitivity * (180 / Math.PI);
+            const rawX = (face.head.x || 0) * faceSensitivity * (180 / Math.PI);
+            const rawY = (face.head.y || 0) * faceSensitivity * (180 / Math.PI);
+            const rawZ = (face.head.z || 0) * faceSensitivity * (180 / Math.PI);
+
+            if (!smoothedHead.initialized) {
+                smoothedHead.x = rawX;
+                smoothedHead.y = rawY;
+                smoothedHead.z = rawZ;
+                smoothedHead.initialized = true;
+            } else {
+                smoothedHead.x = smoothValue(smoothedHead.x, rawX, faceSmoothing);
+                smoothedHead.y = smoothValue(smoothedHead.y, rawY, faceSmoothing);
+                smoothedHead.z = smoothValue(smoothedHead.z, rawZ, faceSmoothing);
+            }
 
             const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
             if (renderComp && renderComp.meshInstances) {
@@ -102,7 +138,7 @@ function onFaceResults(results) {
                             return bName.includes('head') || bName.includes('neck');
                         });
                         if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
-                            headBone.setLocalEulerAngles(headX, headY, headZ);
+                            headBone.setLocalEulerAngles(smoothedHead.x, smoothedHead.y, smoothedHead.z);
                         }
                         break;
                     }
@@ -131,10 +167,14 @@ function applyFaceBlendshapes(face) {
     for (const [key, possibleNames] of Object.entries(morphMap)) {
         if (face[key] !== undefined && face[key] !== null) {
             const rawVal = Number(face[key]) || 0;
-            const value = Math.max(0, Math.min(1, rawVal * faceSensitivity));
+            const targetVal = Math.max(0, Math.min(1, rawVal * faceSensitivity));
             for (const name of possibleNames) {
                 const idx = findFaceMorphIndex(name);
                 if (idx >= 0) {
+                    const prevVal = smoothedMorphs.has(idx) ? smoothedMorphs.get(idx) : targetVal;
+                    const value = Math.max(0, Math.min(1, smoothValue(prevVal, targetVal, faceSmoothing)));
+                    smoothedMorphs.set(idx, value);
+
                     S.selected._morphInstance.setWeight(idx, value);
                     const slider = document.querySelector(`#morphControls input[data-morph-idx="${idx}"]`);
                     if (slider) {
@@ -175,6 +215,7 @@ async function startFaceTracking() {
     }
 
     try {
+        resetFaceSmoothingState();
         setFaceStatus("Menginisialisasi Face Tracking...");
         await initFaceMesh();
 
@@ -206,9 +247,7 @@ async function startFaceTracking() {
         }
 
         faceRafId = requestAnimationFrame(processFrame);
-
-        const btnFaceTrack = document.getElementById('btnFaceTrack');
-        if (btnFaceTrack) btnFaceTrack.classList.add('active');
+        updateFaceTrackButtonStates();
 
         setFaceStatus("✅ Face Tracking aktif!");
         logFace("✅ Face tracking started");
@@ -232,14 +271,36 @@ function stopFaceTracking() {
         } catch (e) {}
         cameraStream = null;
     }
-    const btnFaceTrack = document.getElementById('btnFaceTrack');
-    if (btnFaceTrack) btnFaceTrack.classList.remove('active');
+    resetFaceSmoothingState();
+    updateFaceTrackButtonStates();
     setFaceStatus("Face Tracking dinonaktifkan");
     logFace("⏹ Face tracking stopped");
 }
 window.stopFaceTracking = stopFaceTracking;
 
-const btnFaceTrackEl = document.getElementById('btnFaceTrack');
-if (btnFaceTrackEl) btnFaceTrackEl.onclick = startFaceTracking;
+['btnFaceTrack', 'btnFaceTrackToggle'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.onclick = startFaceTracking;
+});
+
+const sensSlider = document.getElementById('faceSensitivity');
+if (sensSlider) {
+    sensSlider.oninput = (e) => {
+        const parsed = parseFloat(e.target.value);
+        if (isFinite(parsed)) faceSensitivity = Math.max(0.1, Math.min(2.5, parsed));
+        const out = document.getElementById('faceSensitivityOut');
+        if (out) out.textContent = faceSensitivity.toFixed(2);
+    };
+}
+
+const smoothSlider = document.getElementById('faceSmoothing');
+if (smoothSlider) {
+    smoothSlider.oninput = (e) => {
+        const parsed = parseFloat(e.target.value);
+        if (isFinite(parsed)) faceSmoothing = Math.max(0, Math.min(0.95, parsed));
+        const out = document.getElementById('faceSmoothingOut');
+        if (out) out.textContent = faceSmoothing.toFixed(2);
+    };
+}
 
 logFace("✅ faceTracking.js loaded");
