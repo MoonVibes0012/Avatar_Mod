@@ -2,6 +2,7 @@
 // Inisialisasi aplikasi, canvas, scene dasar, dan render loop
 
 let isAppReady = false;
+let motionElapsed = 0;
 
 function setStatusText(msg) {
     const el = document.getElementById('status');
@@ -14,6 +15,52 @@ function logInit(msg) {
     } else if (typeof console !== 'undefined') {
         console.log(msg);
     }
+}
+
+function updateObjectMotions(dt) {
+    if (typeof window.S === 'undefined' || !window.S || !Array.isArray(window.S.objects)) return;
+    motionElapsed += dt;
+
+    window.S.objects.forEach(entity => {
+        if (!entity || !entity.enabled) return;
+        const hasSpin = !!entity._animSpin;
+        const hasPulse = !!entity._animPulse;
+        const hasWobble = !!entity._animWobble;
+        if (!hasSpin && !hasPulse && !hasWobble) return;
+
+        try {
+            if (!entity._baseScale && typeof entity.getLocalScale === 'function') {
+                entity._baseScale = entity.getLocalScale().clone();
+            }
+            if (!entity._baseRot && typeof entity.getEulerAngles === 'function') {
+                entity._baseRot = entity.getEulerAngles().clone();
+            }
+
+            const baseRot = entity._baseRot || { x: 0, y: 0, z: 0 };
+            const baseScale = entity._baseScale || { x: 1, y: 1, z: 1 };
+
+            if (hasSpin && typeof entity.rotate === 'function') {
+                entity.rotate(0, 65 * dt, 0);
+            }
+
+            if (hasWobble && typeof entity.setEulerAngles === 'function') {
+                const wobZ = Math.sin(motionElapsed * 5.0) * 8.0;
+                const wobX = Math.cos(motionElapsed * 3.2) * 4.0;
+                if (!hasSpin) {
+                    entity.setEulerAngles(baseRot.x + wobX, baseRot.y, baseRot.z + wobZ);
+                }
+            }
+
+            if (hasPulse && typeof entity.setLocalScale === 'function') {
+                const pulseFactor = 1.0 + Math.sin(motionElapsed * 3.5) * 0.08;
+                entity.setLocalScale(
+                    baseScale.x * pulseFactor,
+                    baseScale.y * pulseFactor,
+                    baseScale.z * pulseFactor
+                );
+            }
+        } catch (e) {}
+    });
 }
 
 // Canvas & App initialization
@@ -146,6 +193,7 @@ function renderLoop(now) {
         dt = Math.min(dt, 0.1);
         if (dt === 0) dt = 0.016;
         lastFrameTime = now;
+        updateObjectMotions(dt);
         app.update(dt);
         app.render();
     }
