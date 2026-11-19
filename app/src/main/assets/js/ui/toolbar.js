@@ -18,6 +18,16 @@ function byId(id) {
     return document.getElementById(id);
 }
 
+function syncMotionButtons(entity) {
+    const spinBtn = byId('animSpin');
+    const pulseBtn = byId('animPulse');
+    const wobbleBtn = byId('animWobble');
+    if (spinBtn) spinBtn.classList.toggle('on', !!(entity && entity._animSpin));
+    if (pulseBtn) pulseBtn.classList.toggle('on', !!(entity && entity._animPulse));
+    if (wobbleBtn) wobbleBtn.classList.toggle('on', !!(entity && entity._animWobble));
+}
+window.syncMotionButtons = syncMotionButtons;
+
 logToolbar("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + (window.devicePixelRatio || 1));
 
 // === TOOLBAR SHORTCUT BINDINGS ===
@@ -94,9 +104,11 @@ window.addEventListener('keydown', (e) => {
 });
 
 let snapEnabled = false;
-if (byId('snapToggle')) {
-    byId('snapToggle').onchange = (e) => {
-        snapEnabled = !!e.target.checked;
+const snapToggleBtn = byId('snapToggle');
+if (snapToggleBtn) {
+    snapToggleBtn.onclick = () => {
+        snapEnabled = !snapEnabled;
+        snapToggleBtn.classList.toggle('on', snapEnabled);
         setToolbarStatus(snapEnabled ? 'Grid Snap: ON (0.5 unit)' : 'Grid Snap: OFF');
     };
 }
@@ -154,18 +166,21 @@ bind('pz', 'pzo', v => S.selected.setPosition(S.selected.getPosition().x, S.sele
 bind('rx', 'rxo', v => {
     S.selected._animSpin = false;
     S.selected._animWobble = false;
+    syncMotionButtons(S.selected);
     S.selected.setEulerAngles(v, S.selected.getEulerAngles().y, S.selected.getEulerAngles().z);
     if (S.selected._baseRot) S.selected._baseRot.x = v;
 }, 'rxR', -180, 180, 0);
 bind('ry', 'ryo', v => {
     S.selected._animSpin = false;
     S.selected._animWobble = false;
+    syncMotionButtons(S.selected);
     S.selected.setEulerAngles(S.selected.getEulerAngles().x, v, S.selected.getEulerAngles().z);
     if (S.selected._baseRot) S.selected._baseRot.y = v;
 }, 'ryR', -180, 180, 0);
 bind('rz', 'rzo', v => {
     S.selected._animSpin = false;
     S.selected._animWobble = false;
+    syncMotionButtons(S.selected);
     S.selected.setEulerAngles(S.selected.getEulerAngles().x, S.selected.getEulerAngles().y, v);
     if (S.selected._baseRot) S.selected._baseRot.z = v;
 }, 'rzR', -180, 180, 0);
@@ -180,7 +195,10 @@ if (byId('sc') && byId('sco')) {
         scEl.value = String(v);
         if (scREl) scREl.value = String(Math.max(0.1, Math.min(5, v)));
         scOut.textContent = v.toFixed(2);
-        if (S.selected) S.selected.setLocalScale(v, v, v);
+        if (S.selected) {
+            S.selected.setLocalScale(v, v, v);
+            if (S.selected._baseScale) S.selected._baseScale.set(v, v, v);
+        }
     };
     scEl.oninput = () => {
         let raw = parseFloat(scEl.value);
@@ -283,6 +301,10 @@ if (byId('animSpin')) {
     byId('animSpin').onclick = () => {
         if (!S.selected) return alert("Pilih objek dulu!");
         S.selected._animSpin = !S.selected._animSpin;
+        if (S.selected._animSpin && !S.selected._baseRot && typeof S.selected.getEulerAngles === 'function') {
+            S.selected._baseRot = S.selected.getEulerAngles().clone();
+        }
+        syncMotionButtons(S.selected);
         if (typeof saveState === 'function') saveState();
         setToolbarStatus("Auto-Spin: " + (S.selected._animSpin ? "ON" : "OFF"));
     };
@@ -291,6 +313,10 @@ if (byId('animPulse')) {
     byId('animPulse').onclick = () => {
         if (!S.selected) return alert("Pilih objek dulu!");
         S.selected._animPulse = !S.selected._animPulse;
+        if (S.selected._animPulse && !S.selected._baseScale && typeof S.selected.getLocalScale === 'function') {
+            S.selected._baseScale = S.selected.getLocalScale().clone();
+        }
+        syncMotionButtons(S.selected);
         if (typeof saveState === 'function') saveState();
         setToolbarStatus("Idle Pulse: " + (S.selected._animPulse ? "ON" : "OFF"));
     };
@@ -299,10 +325,23 @@ if (byId('animWobble')) {
     byId('animWobble').onclick = () => {
         if (!S.selected) return alert("Pilih objek dulu!");
         S.selected._animWobble = !S.selected._animWobble;
+        if (S.selected._animWobble && !S.selected._baseRot && typeof S.selected.getEulerAngles === 'function') {
+            S.selected._baseRot = S.selected.getEulerAngles().clone();
+        }
+        syncMotionButtons(S.selected);
         if (typeof saveState === 'function') saveState();
         setToolbarStatus("Spring Wobble: " + (S.selected._animWobble ? "ON" : "OFF"));
     };
 }
+
+document.addEventListener('click', (e) => {
+    if (e.target && e.target.closest('#tree')) {
+        setTimeout(() => {
+            const sel = (typeof S !== 'undefined' && S) ? S.selected : null;
+            syncMotionButtons(sel);
+        }, 0);
+    }
+});
 
 // === PANEL CONTROLS ===
 function closeSidePanel(panelId) {
