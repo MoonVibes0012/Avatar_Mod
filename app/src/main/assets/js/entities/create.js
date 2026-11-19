@@ -1,50 +1,72 @@
 /* ===== VTuber Forge — js/entities/create.js ===== */
-// Fungsi untuk membuat primitives dan avatar parts
+// Pembuatan objek primitive dan avatar parts
 
-function createShape(type) {
-    if (!isAppReady) return;
-    const entity = new pc.Entity(type + '-' + S.maxId++);
-    let renderType = 'box';
-    if (type === 'sphere' || type === 'head' || type === 'hair' || type === 'eye') renderType = 'sphere';
-    if (type === 'capsule' || type === 'body' || type === 'tail') renderType = 'capsule';
-    if (type === 'cylinder') renderType = 'cylinder';
-    
-    try {
-        entity.addComponent('render', { type: renderType, castShadows: false });
-    } catch (err) {
-        dbg("WARNING: " + renderType + " gagal dibuat — " + err.message);
-        if (renderType !== 'box') {
-            try { entity.addComponent('render', { type: 'box', castShadows: false }); }
-            catch(e2) { dbg("Box fallback juga gagal: " + e2.message); }
-        }
-    }
-    
-    try {
-        const mat = new pc.StandardMaterial();
-        mat.diffuse = new pc.Color(0.6, 0.2, 0.8);
-        mat.update();
-        if (entity.render) entity.render.material = mat;
-    } catch(e) { dbg("Material setup fail: " + e.message); }
-    
-    try {
-        entity.setPosition(0, 1, 0);
-        if (type === 'body') entity.setLocalScale(0.8, 1.2, 0.5);
-        if (type === 'head' || type === 'hair' || type === 'eye') entity.setLocalScale(0.6, 0.6, 0.6);
-        entity._baseScale = entity.getLocalScale().clone();
-        entity._baseRot = entity.getEulerAngles().clone();
-    } catch(e) {}
-    
-    app.root.addChild(entity);
-    S.objects.push(entity);
-    saveState();
-    updateTree();
-    selectObject(entity);
+function setCreateStatus(msg) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = msg;
 }
 
-// Event listeners untuk tombol add
-document.querySelectorAll('[data-add]').forEach(btn => {
-    btn.onclick = () => {
-        createShape(btn.dataset.add);
-        $('status').textContent = "✓ " + btn.dataset.add + " ditambahkan";
+function getCreateApp() {
+    if (typeof window.app !== 'undefined' && window.app) return window.app;
+    if (typeof app !== 'undefined' && app) return app;
+    return null;
+}
+
+function addObj(type, name) {
+    const pcApp = getCreateApp();
+    if (!pcApp || !pcApp.root) {
+        setCreateStatus("⚠ Scene belum siap.");
+        return null;
     }
+
+    const id = (typeof S.maxId === 'number' && isFinite(S.maxId)) ? S.maxId++ : 1;
+    const label = name || type;
+    const e = new pc.Entity(`${label}-${id}`);
+    e.addComponent('render', { type: 'box', castShadows: false });
+
+    const m = new pc.StandardMaterial();
+    m.diffuse = new pc.Color(0.6, 0.2, 0.8);
+    if (typeof m.update === 'function') m.update();
+    e.render.material = m;
+
+    if (type === 'sphere') {
+        e.render.type = 'sphere';
+    } else if (type === 'cylinder') {
+        e.render.type = 'cylinder';
+    } else if (type === 'capsule') {
+        e.render.type = 'capsule';
+    } else if (type === 'body') {
+        e.render.type = 'capsule';
+        e.setLocalScale(0.7, 1.0, 0.45);
+    } else if (type === 'head') {
+        e.render.type = 'sphere';
+        e.setLocalScale(0.55, 0.6, 0.55);
+        e.setPosition(0, 1.65, 0);
+    } else if (type === 'eye') {
+        e.render.type = 'sphere';
+        e.setLocalScale(0.1, 0.14, 0.08);
+        e.setPosition(0.11, 1.68, 0.24);
+    } else if (type === 'hair') {
+        e.render.type = 'box';
+        e.setLocalScale(0.6, 0.7, 0.35);
+        e.setPosition(0, 1.55, -0.18);
+    }
+
+    e._baseScale = e.getLocalScale().clone();
+    e._baseRot = e.getEulerAngles().clone();
+
+    pcApp.root.addChild(e);
+    S.objects.push(e);
+
+    if (typeof saveState === 'function') saveState();
+    if (typeof updateTree === 'function') updateTree();
+    if (typeof selectObject === 'function') selectObject(e);
+
+    setCreateStatus("Ditambahkan: " + e.name);
+    return e;
+}
+window.addObj = addObj;
+
+document.querySelectorAll('[data-add]').forEach(b => {
+    b.onclick = () => addObj(b.dataset.add);
 });
