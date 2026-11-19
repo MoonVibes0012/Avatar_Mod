@@ -55,41 +55,70 @@ class MainActivity : Activity() {
                 forceDark = WebSettings.FORCE_DARK_OFF
             }
         }
-        
+
         webView.clearCache(true)
         webView.clearHistory()
         webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
         webView.isLongClickable = false
         webView.setOnLongClickListener { true }
-        
+
         webView.addJavascriptInterface(DebugBridge(this), "AndroidBridge")
-        
+
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val targetUrl = request?.url?.toString() ?: return false
+                return handleUrlNavigation(targetUrl)
+            }
+
+            @Deprecated("Deprecated in API 24")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                if (url?.startsWith("http") == true) return true
+                val targetUrl = url ?: return false
+                return handleUrlNavigation(targetUrl)
+            }
+
+            private fun handleUrlNavigation(url: String): Boolean {
+                if (url.startsWith("file:///android_asset/") || url.startsWith("data:") || url.startsWith("blob:")) {
+                    return false
+                }
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Log.e("VTuberForge_Nav", "Gagal membuka URL eksternal: ${e.message}")
+                    }
+                    return true
+                }
                 return false
             }
-            
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 isPageLoaded = true
                 Log.d("VTuberForge_Page", "Page finished: $url")
-                
+
                 webView.evaluateJavascript(
-                    "dbg && dbg('=== PAGE READY from Kotlin, JS exec OK ===')",
+                    "if (typeof dbg === 'function') dbg('=== PAGE READY from Kotlin, JS exec OK ===');",
                     null
                 )
-                
+
                 pendingModelUrl?.let { path ->
-                    webView.evaluateJavascript("window.loadModelFromIntent && window.loadModelFromIntent('$path')", null)
+                    webView.evaluateJavascript(
+                        "if (typeof window.loadModelFromIntent === 'function') window.loadModelFromIntent('$path');",
+                        null
+                    )
                     pendingModelUrl = null
                 }
             }
-            
+
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     if (detail?.didCrash() == true) {
-                        android.widget.Toast.makeText(this@MainActivity, "Memori Grafis Penuh! Memuat ulang...", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(
+                            this@MainActivity,
+                            "Memori Grafis Penuh! Memuat ulang...",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                         view?.destroy()
                         recreate()
                         return true
@@ -98,16 +127,17 @@ class MainActivity : Activity() {
                 return super.onRenderProcessGone(view, detail)
             }
         }
-        
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR || 
-                    consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR ||
+                    consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.WARNING
+                ) {
                     Log.d("WebViewJS", "${consoleMessage.message()} -- Line ${consoleMessage.lineNumber()}")
                 }
                 return true
             }
-            
+
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -127,7 +157,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        
+
         setContentView(webView)
         webView.loadUrl("file:///android_asset/app.html")
         handleIntent(intent)
@@ -152,7 +182,7 @@ class MainActivity : Activity() {
             }
             else -> null
         }
-        
+
         uri?.let {
             try {
                 val inputStream = contentResolver.openInputStream(uri)
@@ -160,14 +190,17 @@ class MainActivity : Activity() {
                     val fileName = uri.lastPathSegment ?: "intent_model.glb"
                     val safeName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                     val cacheFile = File(cacheDir, "intent_${System.currentTimeMillis()}_$safeName")
-                    cacheFile.outputStream().use { inputStream.copyTo(it) }
+                    cacheFile.outputStream().use { out -> inputStream.copyTo(out) }
                     inputStream.close()
-                    
+
                     val fileUrl = "file://" + cacheFile.absolutePath
-                    val escapedUrl = fileUrl.replace("'", "\\'")
-                    
+                    val escapedUrl = fileUrl.replace("\\", "\\\\").replace("'", "\\'")
+
                     if (isPageLoaded) {
-                        webView.evaluateJavascript("window.loadModelFromIntent && window.loadModelFromIntent('$escapedUrl')", null)
+                        webView.evaluateJavascript(
+                            "if (typeof window.loadModelFromIntent === 'function') window.loadModelFromIntent('$escapedUrl');",
+                            null
+                        )
                     } else {
                         pendingModelUrl = escapedUrl
                     }
@@ -186,10 +219,14 @@ class MainActivity : Activity() {
                 if (uri != null) {
                     try {
                         contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    } catch (e: Exception) { Log.e("URI", "Gagal ambil izin permanen") }
+                    } catch (e: Exception) {
+                        Log.e("URI", "Gagal ambil izin permanen")
+                    }
                 }
                 WebChromeClient.FileChooserParams.parseResult(resultCode, data)
-            } else { null }
+            } else {
+                null
+            }
             filePathCallback?.onReceiveValue(results)
             filePathCallback = null
         } else {
@@ -199,7 +236,14 @@ class MainActivity : Activity() {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            webView.evaluateJavascript("window.handleAndroidBack();", null)
+            if (isPageLoaded) {
+                webView.evaluateJavascript(
+                    "if (typeof window.handleAndroidBack === 'function') { window.handleAndroidBack(); } else if (window.AndroidBridge && window.AndroidBridge.exitApp) { window.AndroidBridge.exitApp(); }",
+                    null
+                )
+            } else {
+                finishAffinity()
+            }
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -209,16 +253,26 @@ class MainActivity : Activity() {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             try {
-                webView.evaluateJavascript("window.clearUndoStack && window.clearUndoStack();", null)
+                webView.evaluateJavascript(
+                    "if (typeof window.clearUndoStack === 'function') window.clearUndoStack();",
+                    null
+                )
             } catch (e: Exception) {
                 Log.e("VTuberForge_Trim", "Gagal clear undo: ${e.message}")
             }
         }
     }
 
-    override fun onPause() { super.onPause(); webView.onPause() }
-    override fun onResume() { super.onResume(); webView.onResume() }
-    
+    override fun onPause() {
+        super.onPause()
+        if (::webView.isInitialized) webView.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) webView.onResume()
+    }
+
     override fun onDestroy() {
         if (::webView.isInitialized) {
             webView.destroy()
