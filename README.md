@@ -2,31 +2,141 @@
 
 Editor avatar Android offline yang mengutamakan perangkat seluler. Editor ini dibundel di dalam APK dan tidak memerlukan jaringan saat dijalankan.
 
-## Diimplementasikan
+## Fitur Utama
 
-- Editor anatomi per-bagian parametrik: tinggi, lebar, kedalaman, volume, pembentukan otot/jaringan lunak, tag wilayah, dan kontrol reset.
-- Anatomi dasar yang dapat diedit secara detail: dada, payudara, panggul, leher, kepala, telinga, mata, hidung, mulut, rambut, lengan atas/bawah, tangan, jari-jari, paha, betis, kaki, dan jari kaki.
+- Editor anatomi per-bagian parametrik: tinggi, lebar, kedalaman, volume, pembentukan otot/jaringan lunak, tag wilayah, dan kontrol reset
+- Anatomi dasar yang dapat diedit secara detail: dada, payudara, panggul, leher, kepala, telinga, mata, hidung, mulut, rambut, lengan atas/bawah, tangan, jari-jari, paha, betis, kaki, dan jari kaki
 - Viewport 3D WebGL dengan orbit/zoom sentuh dan pemilihan ketuk
-- Bagian avatar prosedural dan primitif
-- Transformasi objek dan kontrol material
-- Mode verteks dengan pengeditan per-verteks
+- Bagian avatar prosedural dan primitif (cube, sphere, cylinder, capsule)
+- Transformasi objek dan kontrol material (warna, gloss, metalness)
+- Mode verteks dengan pengeditan per-verteks (maks 5000 vertex)
 - Hierarki tulang / status target IK dan kontrol ekspresi
 - Status garis waktu/keyframe
 - Penyimpanan otomatis offline ke penyimpanan lokal perangkat
-- Simpan/muat proyek `.vforge.json`
-- Ekspor OBJ
-- Ekspor GLB
-- Impor biner GLB/VRM untuk geometri mesh
-- Ekspor biner VRM 1.0 dengan metadata humanoid, ekspresi, metadata orang-pertama/lihat-dan ekstensi spring-bone
+- Undo/Redo dengan stack management
+- ASTC texture optimization untuk Mali GPU (otomatis saat import)
+- Intent handler untuk membuka file GLB/VRM langsung dari file manager
+
+## Editor Anatomi
+
+- Kontrol parametrik per bagian tubuh
+- Transformasi posisi, rotasi, dan scale dengan slider + number input
+- Grid snap untuk presisi penempatan
+- Mirror X untuk simetri
+- Center untuk reset posisi
+- Smooth mesh dengan algoritma Laplacian (maks 20k vertex)
+- Split Parts untuk memisahkan mesh berdasarkan connected components
+- Split Material untuk memisahkan mesh berdasarkan material berbeda
+
+## Mode Editing
+
+- Mode Object: transformasi objek (posisi/rotasi/scale)
+- Mode Vertex: pengeditan per-vertex dengan slider X/Y/Z
+- Mode Bone: rotasi bone individual untuk model skinned
+- Reset Bone dan Reset All untuk kembali ke bind pose
+- Duplicate, Delete, dan operasi objek lainnya
+- New Scene untuk menghapus semua objek
+
+## Animasi & Tracking
+
+- Auto-Spin, Idle Pulse, dan Spring Wobble procedural
+- Animation Clip playback (Play/Pause/Stop) dari model import
+- Character Driver dengan fitur:
+  - Auto-Blink (kedipan mata natural)
+  - Breathing (gerakan napas pada spine/chest)
+  - Idle Sway (goyangan badan halus)
+  - Head Bob (anggukan kepala natural)
+  - Walk Cycle (animasi jalan procedural)
+  - Reset Pose dan Detach
+- Face Tracking dengan MediaPipe + Kalidokit
+- Blendshape/Morph Targets dengan slider per-morph
+- Expression Presets: neutral, smile, laugh, surprise, angry, sad, wink, shock, happy, cool, love
+- Custom Expression save/load ke localStorage
+- Intensity control untuk expression
+
+## Import & Export
+
+- Import biner GLB/VRM untuk geometri mesh
+- Import via file picker atau intent Android
+- Export OBJ dengan vertex/UV/normal
+- Export GLB (biner glTF)
+- Export VRM 1.0 dengan metadata humanoid, ekspresi, metadata orang-pertama/lihat-dan ekstensi spring-bone
+- Screenshot viewport ke PNG
+- Save/Load scene ke `.vforge.json`
+- Save Debug Log untuk troubleshooting
 
 ## Build APK
 
-GitHub Actions membangun `app-debug.apk` saat push atau dispatch manual. Alur kerja ini menginstal Android SDK 35 dan Gradle 8.10, lalu mengunggah APK sebagai `vtuber-forge-debug-apk`.
+- GitHub Actions membangun `app-debug.apk` saat push atau dispatch manual
+- Alur kerja ini menginstal Android SDK 35 dan Gradle 8.10
+- APK diunggah sebagai artifact `vtuber-forge-debug-apk`
+- Target SDK 35 (Android 15)
+- Min SDK 26 (Android 8.0 Oreo)
+- ABI filter: arm64-v8a dan armeabi-v7a
+- Java 17 dan Kotlin 2.0.21
 
 ## Runtime
 
-Tidak ada CDN, server web, akun, atau koneksi jaringan yang diperlukan oleh editor.
+- Tidak ada CDN, server web, akun, atau koneksi jaringan yang diperlukan oleh editor
+- WebView dengan hardware acceleration
+- Large heap enabled untuk model besar
+- Render process gone handler untuk crash recovery
+- Trim memory handler untuk low memory condition
+- Cache cleanup otomatis untuk file intent lama (>24 jam)
+- File download ke folder Downloads dengan timestamp
 
-## Catatan penting tentang format
+## Catatan Penting tentang Format
 
-Ekspor VRM dihasilkan secara lokal sebagai biner glTF VRM 1.0 dengan metadata humanoid. Aset VRM kompleks yang dibuat secara eksternal mungkin berisi data skinning, morph, tekstur, MToon, dan spring yang belum dipertahankan oleh editor ringan ini saat impor bolak-balik.
+- Ekspor VRM dihasilkan secara lokal sebagai biner glTF VRM 1.0 dengan metadata humanoid
+- Aset VRM kompleks yang dibuat secara eksternal mungkin berisi data skinning, morph, tekstur, MToon, dan spring yang belum dipertahankan oleh editor ringan ini saat impor bolak-balik
+- Model skinned tidak bisa di-duplicate, di-save ke JSON, atau di-undo/redo (batasan engine)
+- Mesh Draco compressed tidak didukung untuk edit vertex
+- File JSON hanya menyimpan bentuk/warna, tekstur gambar akan hilang (menjadi warna solid)
+- Split Parts tidak mendukung skinned mesh (hanya mesh statis)
+
+## Struktur Proyek
+
+app/
+├── src/main/
+│   ├── java/com/onisonge/vtuberforge/
+│   │   ├── MainActivity.kt
+│   │   └── DebugBridge.kt
+│   ├── assets/
+│   │   ├── app.html
+│   │   ├── style.css
+│   │   └── js/
+│   │       ├── core/
+│   │       │   ├── config.js
+│   │       │   ├── debug.js
+│   │       │   └── init.js
+│   │       ├── camera/
+│   │       │   └── controls.js
+│   │       ├── entities/
+│   │       │   ├── create.js
+│   │       │   ├── select.js
+│   │       │   ├── operations.js
+│   │       │   └── split.js
+│   │       ├── editing/
+│   │       │   ├── vertex.js
+│   │       │   ├── bone.js
+│   │       │   └── smooth.js
+│   │       ├── animation/
+│   │       │   └── character_driver.js
+│   │       ├── io/
+│   │       │   ├── import.js
+│   │       │   ├── export.js
+│   │       │   └── save_load.js
+│   │       ├── scene/
+│   │       │   └── serialize.js
+│   │       ├── tracking/
+│   │       │   └── face.js
+│   │       └── ui/
+│   │           ├── toolbar.js
+│   │           └── expressions.js
+│   └── res/
+│       ├── values/
+│       │   ├── strings.xml
+│       │   └── styles.xml
+│       └── AndroidManifest.xml
+├── build.gradle.kts
+└── settings.gradle.kts
