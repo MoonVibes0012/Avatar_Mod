@@ -99,11 +99,43 @@ function findFaceMorphIndex(name) {
     return idx;
 }
 
+function applyFaceHeadRotation(face, renderComp) {
+    if (!face || !face.head || !renderComp || !Array.isArray(renderComp.meshInstances)) return;
+
+    const rawX = (face.head.x || 0) * faceSensitivity * (180 / Math.PI);
+    const rawY = (face.head.y || 0) * faceSensitivity * (180 / Math.PI);
+    const rawZ = (face.head.z || 0) * faceSensitivity * (180 / Math.PI);
+
+    if (!smoothedHead.initialized) {
+        smoothedHead.x = rawX;
+        smoothedHead.y = rawY;
+        smoothedHead.z = rawZ;
+        smoothedHead.initialized = true;
+    } else {
+        smoothedHead.x = smoothValue(smoothedHead.x, rawX, faceSmoothing);
+        smoothedHead.y = smoothValue(smoothedHead.y, rawY, faceSmoothing);
+        smoothedHead.z = smoothValue(smoothedHead.z, rawZ, faceSmoothing);
+    }
+
+    for (const mi of renderComp.meshInstances) {
+        if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
+            const headBone = mi.skinInstance.bones.find(b => {
+                const bName = ((b && b.name) || '').toLowerCase();
+                return bName.includes('head') || bName.includes('neck');
+            });
+            if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
+                headBone.setLocalEulerAngles(smoothedHead.x, smoothedHead.y, smoothedHead.z);
+            }
+            break;
+        }
+    }
+}
+
 function onFaceResults(results) {
     if (!isFaceTracking || !results || !Array.isArray(results.multiFaceLandmarks) || results.multiFaceLandmarks.length === 0) {
         return;
     }
-    if (!S.selected || !S.selected._morphInstance || !Array.isArray(S.selected._morphNames)) return;
+    if (!S.selected) return;
 
     const faceSolver = getKalidokitFaceSolver();
     if (!faceSolver || typeof faceSolver.solve !== 'function') return;
@@ -113,40 +145,12 @@ function onFaceResults(results) {
         const face = faceSolver.solve(faceLandmarks, { runtime: 'mediapipe', video: null });
         if (!face) return;
 
-        if (face.head) {
-            const rawX = (face.head.x || 0) * faceSensitivity * (180 / Math.PI);
-            const rawY = (face.head.y || 0) * faceSensitivity * (180 / Math.PI);
-            const rawZ = (face.head.z || 0) * faceSensitivity * (180 / Math.PI);
+        const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
+        applyFaceHeadRotation(face, renderComp);
 
-            if (!smoothedHead.initialized) {
-                smoothedHead.x = rawX;
-                smoothedHead.y = rawY;
-                smoothedHead.z = rawZ;
-                smoothedHead.initialized = true;
-            } else {
-                smoothedHead.x = smoothValue(smoothedHead.x, rawX, faceSmoothing);
-                smoothedHead.y = smoothValue(smoothedHead.y, rawY, faceSmoothing);
-                smoothedHead.z = smoothValue(smoothedHead.z, rawZ, faceSmoothing);
-            }
-
-            const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
-            if (renderComp && renderComp.meshInstances) {
-                for (const mi of renderComp.meshInstances) {
-                    if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-                        const headBone = mi.skinInstance.bones.find(b => {
-                            const bName = ((b && b.name) || '').toLowerCase();
-                            return bName.includes('head') || bName.includes('neck');
-                        });
-                        if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
-                            headBone.setLocalEulerAngles(smoothedHead.x, smoothedHead.y, smoothedHead.z);
-                        }
-                        break;
-                    }
-                }
-            }
+        if (S.selected._morphInstance && Array.isArray(S.selected._morphNames)) {
+            applyFaceBlendshapes(face);
         }
-
-        applyFaceBlendshapes(face);
     } catch (e) {
         logFace("Face tracking error: " + e.message);
     }
