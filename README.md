@@ -94,49 +94,18 @@ Editor avatar Android offline yang mengutamakan perangkat seluler. Editor ini di
 - File JSON hanya menyimpan bentuk/warna, tekstur gambar akan hilang (menjadi warna solid)
 - Split Parts tidak mendukung skinned mesh (hanya mesh statis)
 
-## Struktur Proyek
+## Penjelasan Folder
 
-app/
-├── src/main/
-│   ├── java/com/onisonge/vtuberforge/
-│   │   ├── MainActivity.kt
-│   │   └── DebugBridge.kt
-│   ├── assets/
-│   │   ├── app.html
-│   │   ├── style.css
-│   │   └── js/
-│   │       ├── core/
-│   │       │   ├── config.js
-│   │       │   ├── debug.js
-│   │       │   └── init.js
-│   │       ├── camera/
-│   │       │   └── controls.js
-│   │       ├── entities/
-│   │       │   ├── create.js
-│   │       │   ├── select.js
-│   │       │   ├── operations.js
-│   │       │   └── split.js
-│   │       ├── editing/
-│   │       │   ├── vertex.js
-│   │       │   ├── bone.js
-│   │       │   └── smooth.js
-│   │       ├── animation/
-│   │       │   └── character_driver.js
-│   │       ├── io/
-│   │       │   ├── import.js
-│   │       │   ├── export.js
-│   │       │   └── save_load.js
-│   │       ├── scene/
-│   │       │   └── serialize.js
-│   │       ├── tracking/
-│   │       │   └── face.js
-│   │       └── ui/
-│   │           ├── toolbar.js
-│   │           └── expressions.js
-│   └── res/
-│       ├── values/
-│       │   ├── strings.xml
-│       │   └── styles.xml
-│       └── AndroidManifest.xml
-├── build.gradle.kts
-└── settings.gradle.kts
+- `.github/workflows/` — konfigurasi GitHub Actions untuk build APK otomatis
+- `app/src/main/java/` — kode Kotlin untuk Android native (WebView host + JS bridge)
+- `app/src/main/assets/` — file HTML, CSS, dan JavaScript editor
+- `app/src/main/assets/js/core/` — konfigurasi, debug logging, dan inisialisasi aplikasi
+- `app/src/main/assets/js/camera/` — kontrol kamera orbit, zoom, dan raycast
+- `app/src/main/assets/js/entities/` — pembuatan, seleksi, operasi, dan split objek
+- `app/src/main/assets/js/editing/` — mode edit vertex, bone, dan smooth mesh
+- `app/src/main/assets/js/animation/` — character driver untuk animasi procedural
+- `app/src/main/assets/js/io/` — import GLB/VRM, export OBJ/VRM, save/load JSON
+- `app/src/main/assets/js/scene/` — serialisasi scene (placeholder)
+- `app/src/main/assets/js/tracking/` — face tracking dengan MediaPipe
+- `app/src/main/assets/js/ui/` — toolbar bindings dan expression presets
+- `app/src/main/res/values/` — string resources dan theme styling Android
