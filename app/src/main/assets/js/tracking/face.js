@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/tracking/face.js ===== */
-// Face Tracking dengan MediaPipe + Kalidokit
+// Face Tracking dengan MediaPipe + Kalidokit (Offline/Lokal)
 
 let faceMesh = null;
 let cameraStream = null;
@@ -56,15 +56,23 @@ function updateFaceTrackButtonStates() {
     });
 }
 
+function resolveLocalMediaPipeFile(file) {
+    const cleanFile = String(file || '').replace(/^\/+/, '');
+    if (window.location && String(window.location.href || '').indexOf('file:///android_asset/') === 0) {
+        return `file:///android_asset/js/${cleanFile}`;
+    }
+    return `js/${cleanFile}`;
+}
+
 function initFaceMesh() {
     if (faceMesh) return Promise.resolve();
     if (typeof window.FaceMesh === 'undefined') {
-        return Promise.reject(new Error("MediaPipe FaceMesh belum ter-load."));
+        return Promise.reject(new Error("MediaPipe FaceMesh (js/face_mesh.js) belum ter-load."));
     }
     return new Promise((resolve, reject) => {
         try {
             faceMesh = new window.FaceMesh({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+                locateFile: (file) => resolveLocalMediaPipeFile(file)
             });
             faceMesh.setOptions({
                 maxNumFaces: 1,
@@ -73,7 +81,7 @@ function initFaceMesh() {
                 minTrackingConfidence: 0.5
             });
             faceMesh.onResults(onFaceResults);
-            logFace("✅ MediaPipe Face Mesh initialized");
+            logFace("✅ MediaPipe Face Mesh initialized (local)");
             resolve();
         } catch (e) {
             faceMesh = null;
@@ -211,7 +219,7 @@ async function startFaceTracking() {
     }
 
     if (!getKalidokitFaceSolver()) {
-        return alert("Library Kalidokit tidak tersedia. Cek koneksi internet/CDN lalu muat ulang.");
+        return alert("Library Kalidokit (js/kalidokit.umd.js) tidak tersedia. Periksa file di folder assets/js/.");
     }
 
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
