@@ -1,294 +1,347 @@
 /* ===== VTuber Forge — js/io/import.js ===== */
-// Import GLB/VRM dan Texture Downscale Optimization
+// Import GLB/VRM/GLTF via file input atau intent Android
 
-function setImportStatus(msg) {
-    const el = document.getElementById('status');
-    if (el) el.textContent = msg;
-}
+(function () {
+    'use strict';
 
-function logImport(msg) {
-    if (typeof window.dbg === 'function') {
-        try { window.dbg(msg); } catch (e) {}
-    } else if (typeof console !== 'undefined') {
-        console.log(msg);
-    }
-}
+    const meshCachePool = new Map();
+    window.meshCachePool = meshCachePool;
 
-function setImportControlsDisabled(disabled) {
-    const ids = ['btnImport', 'importMenu', 'import'];
-    ids.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = !!disabled;
-    });
-}
-
-function showImportLoading(show, text) {
-    const ov = document.getElementById('loadingOverlay');
-    const txt = document.getElementById('loadingText');
-    if (txt && text) txt.textContent = text;
-    if (ov) ov.style.display = show ? 'flex' : 'none';
-}
-
-// === TEXTURE OPTIMIZATION ===
-function downscaleTexture(texture, scalePct) {
-    if (!texture || scalePct >= 100) return texture;
-    try {
-        const img = typeof texture.getSource === 'function' ? texture.getSource() : null;
-        if (!img || !img.width || !img.height) return texture;
-
-        let w = Math.floor(img.width * (scalePct / 100));
-        let h = Math.floor(img.height * (scalePct / 100));
-        if (w > 4096) w = 4096;
-        if (h > 4096) h = 4096;
-        if (w < 2 || h < 2) return texture;
-
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = w;
-        tempCanvas.height = h;
-        const ctx = tempCanvas.getContext('2d');
-        if (!ctx) return texture;
-        ctx.drawImage(img, 0, 0, w, h);
-
-        const newTex = new pc.Texture(app.graphicsDevice, {
-            width: w,
-            height: h,
-            format: pc.PIXELFORMAT_RGBA8,
-            mipmaps: true
-        });
-        newTex.setSource(tempCanvas);
-        newTex.upload();
-        tempCanvas.width = 0;
-        tempCanvas.height = 0;
-        return newTex;
-    } catch (e) {
-        logImport("Texture downscale error: " + e.message);
-        return texture;
-    }
-}
-
-// === MODEL IMPORT ===
-function loadModelFromUrl(fileName, url, isBlobUrl) {
-    if (S.isLoadingModel) {
-        if (isBlobUrl) URL.revokeObjectURL(url);
-        alert("Sedang memuat model lain. Tunggu sampai selesai.");
-        return;
+    function setImportStatus(msg) {
+        const el = document.getElementById('status');
+        if (el) el.textContent = msg;
     }
 
-    const lowerName = String(fileName || '').toLowerCase();
-
-    if (lowerName.endsWith('.gltf')) {
-        if (isBlobUrl) URL.revokeObjectURL(url);
-        alert("Format .gltf memerlukan file .bin dan texture terpisah.\n\nGunakan format .glb (binary, single-file).");
-        return;
-    }
-
-    if (lowerName.endsWith('.vrm')) {
-        if (!confirm("Format .VRM sering gagal dibaca karena ekstensi khusus VRoid.\nDisarankan export ke .GLB. Tetap lanjutkan?")) {
-            if (isBlobUrl) URL.revokeObjectURL(url);
-            return;
+    function logImport(msg) {
+        if (typeof window.dbg === 'function') {
+            try { window.dbg(msg); } catch (e) {}
+        } else if (typeof console !== 'undefined') {
+            console.log(msg);
         }
     }
 
-    S.isLoadingModel = true;
-    showImportLoading(true, "Memproses " + fileName);
-    setImportControlsDisabled(true);
-
-    const asset = new pc.Asset(fileName, 'container', { url: url });
-
-    asset.on('load', (loadedAsset) => {
+    function getImportApp() {
+        if (typeof window.getPcApp === 'function') {
+            const pcApp = window.getPcApp();
+            if (pcApp) return pcApp;
+        }
+        if (typeof window.app !== 'undefined' && window.app) return window.app;
         try {
-            const resource = loadedAsset ? loadedAsset.resource : null;
-            const entity = (resource && typeof resource.instantiateRenderEntity === 'function')
-                ? resource.instantiateRenderEntity()
-                : null;
+            if (typeof app !== 'undefined' && app) return app;
+        } catch (e) {}
+        return null;
+    }
 
-            if (!entity) {
-                alert("Tidak ada mesh 3D yang valid di file ini.");
-                if (loadedAsset) app.assets.remove(loadedAsset);
-                if (isBlobUrl) URL.revokeObjectURL(url);
-                return;
+    function showLoading(show, text) {
+        if (show && typeof window.__vtfShowLoading === 'function') {
+            window.__vtfShowLoading(text);
+            return;
+        }
+        if (!show && typeof window.__vtfHideLoading === 'function') {
+            window.__vtfHideLoading();
+            return;
+        }
+        const ov = document.getElementById('loadingOverlay');
+        const txt = document.getElementById('loadingText');
+        if (txt && text) txt.textContent = text;
+        if (ov) ov.style.display = show ? 'flex' : 'none';
+    }
+
+    function syncPrimaryMeshCache(entity, mesh, miIndex) {
+        if (!entity || !mesh) return;
+        try {
+            const pos = mesh.getPositions ? mesh.getPositions() : null;
+            const idx = mesh.getIndices ? mesh.getIndices() : null;
+            const uvs = mesh.getUvs ? mesh.getUvs() : null;
+            const nrm = mesh.getNormals ? mesh.getNormals() : null;
+            if (!pos || pos.length === 0) return;
+
+            if (!Array.isArray(entity._meshCache)) {
+                entity._meshCache = [];
             }
-
-            if (resource && resource.animations && resource.animations.length > 0) {
-                entity._animAssets = resource.animations;
-                entity._animNames = resource.animations.map((a, i) => (a && a.name) ? a.name : `Anim_${i}`);
-                logImport("✅ Animasi terdeteksi: " + entity._animNames.join(', '));
+            const targetSlot = (typeof miIndex === 'number' && miIndex >= 0) ? miIndex : 0;
+            entity._meshCache[targetSlot] = {
+                pos: Array.from(pos),
+                idx: idx ? Array.from(idx) : [],
+                uvs: uvs ? Array.from(uvs) : null,
+                normals: nrm ? Array.from(nrm) : null
+            };
+            if (entity.name) {
+                meshCachePool.set(entity.name, entity._meshCache);
             }
+        } catch (e) {
+            logImport("syncPrimaryMeshCache warning: " + e.message);
+        }
+    }
+    window.syncPrimaryMeshCache = syncPrimaryMeshCache;
 
-            const renderComps = entity.findComponents('render');
-            for (const comp of renderComps) {
-                if (comp.meshInstances && comp.meshInstances.length > 0) {
-                    const mesh = comp.meshInstances[0].mesh;
-                    if (mesh && mesh.morphInstance && Array.isArray(mesh.morphInstance.morphTargets)) {
-                        entity._morphInstance = mesh.morphInstance;
-                        entity._morphNames = mesh.morphInstance.morphTargets.map((mt, i) => (mt && mt.name) ? mt.name : `Morph_${i}`);
-                        logImport("✅ Blendshapes terdeteksi: " + entity._morphNames.join(', '));
-                        break;
+    function downscaleTexture(tex, maxSize) {
+        const pcApp = getImportApp();
+        if (!tex || !pcApp || !pcApp.graphicsDevice) return tex;
+        try {
+            const w = tex.width || 0;
+            const h = tex.height || 0;
+            if (w <= maxSize && h <= maxSize) return tex;
+
+            const src = tex.getSource ? tex.getSource() : null;
+            if (!src) return tex;
+
+            const scale = Math.min(maxSize / w, maxSize / h);
+            const nw = Math.max(1, Math.round(w * scale));
+            const nh = Math.max(1, Math.round(h * scale));
+
+            const c = document.createElement('canvas');
+            c.width = nw;
+            c.height = nh;
+            const ctx = c.getContext('2d');
+            if (!ctx) return tex;
+            ctx.drawImage(src, 0, 0, nw, nh);
+
+            const newTex = new pc.Texture(pcApp.graphicsDevice, {
+                width: nw,
+                height: nh,
+                format: tex.format || pc.PIXELFORMAT_RGBA8,
+                mipmaps: !!(tex.mipmaps),
+                minFilter: tex.minFilter,
+                magFilter: tex.magFilter,
+                addressU: tex.addressU,
+                addressV: tex.addressV
+            });
+            newTex.setSource(c);
+            if (typeof newTex.upload === 'function') newTex.upload();
+
+            if (tex !== newTex && typeof tex.destroy === 'function') {
+                try { tex.destroy(); } catch (destroyErr) {}
+            }
+            return newTex;
+        } catch (e) {
+            logImport("Downscale texture skip: " + e.message);
+            return tex;
+        }
+    }
+
+    function extractMorphData(rootEntity) {
+        let morphInstance = null;
+        let morphNames = [];
+        if (!rootEntity || typeof rootEntity.findComponents !== 'function') {
+            return { morphInstance: null, morphNames: [] };
+        }
+
+        const renderComps = rootEntity.findComponents('render') || [];
+        for (const comp of renderComps) {
+            if (!comp || !Array.isArray(comp.meshInstances)) continue;
+            for (const mi of comp.meshInstances) {
+                if (mi && mi.morphInstance) {
+                    morphInstance = mi.morphInstance;
+                    const morphObj = morphInstance.morph;
+                    const targets = (morphObj && Array.isArray(morphObj.targets)) ? morphObj.targets : [];
+                    morphNames = targets.map((t, i) => (t && t.name) ? t.name : ('Morph_' + i));
+                    if (morphNames.length > 0) {
+                        return { morphInstance, morphNames };
                     }
                 }
             }
+        }
+        return { morphInstance, morphNames };
+    }
 
-            let meshCount = 0;
-            renderComps.forEach(comp => {
-                if (comp.meshInstances) meshCount += comp.meshInstances.length;
-            });
+    function processLoadedAsset(asset, fileName) {
+        const pcApp = getImportApp();
+        if (!pcApp || !pcApp.root) {
+            showLoading(false);
+            alert("Scene belum siap.");
+            return;
+        }
 
-            if (meshCount === 0) {
-                alert("Tidak ada mesh 3D yang valid di file ini.");
-                if (typeof entity.destroy === 'function') entity.destroy();
-                app.assets.remove(loadedAsset);
-                if (isBlobUrl) URL.revokeObjectURL(url);
-                return;
+        logImport("🔄 Memproses asset: " + fileName);
+        showLoading(true, "Memproses model...");
+
+        try {
+            const container = asset.resource;
+            if (!container) {
+                throw new Error("Container resource kosong — file mungkin rusak atau tidak didukung.");
             }
 
-            entity._asset = loadedAsset;
-            entity.findComponents('light').forEach(l => {
-                try { l.destroy(); } catch (e) {}
-            });
+            const entity = (typeof container.instantiateRenderEntity === 'function')
+                ? container.instantiateRenderEntity()
+                : null;
+            if (!entity) {
+                throw new Error("Gagal membuat render entity dari model.");
+            }
 
-            const meshCacheArr = [];
-            const texScaleEl = document.getElementById('texScale');
-            const parsedScale = texScaleEl ? parseInt(texScaleEl.value, 10) : 100;
-            const texScale = isNaN(parsedScale) ? 100 : parsedScale;
+            const baseName = (fileName || 'Model').replace(/\.(glb|vrm|gltf)$/i, '');
+            const id = (typeof S.maxId === 'number' && isFinite(S.maxId)) ? S.maxId++ : 1;
+            entity.name = `${baseName}-${id}`;
+
+            let maxDim = 0;
+            const renderComps = entity.findComponents('render') || [];
+            const meshCacheList = [];
 
             renderComps.forEach(comp => {
-                if (!comp.meshInstances) return;
-                comp.meshInstances.forEach(mi => {
-                    if (!mi || !mi.mesh || !mi.material) return;
-
-                    if (Array.isArray(mi.material)) {
-                        mi.material = mi.material.map(m => (m && typeof m.clone === 'function') ? m.clone() : m);
-                    } else if (typeof mi.material.clone === 'function') {
-                        mi.material = mi.material.clone();
+                if (!comp || !Array.isArray(comp.meshInstances)) return;
+                comp.meshInstances.forEach((mi, miIdx) => {
+                    if (!mi) return;
+                    if (mi.aabb && mi.aabb.halfExtents) {
+                        const he = mi.aabb.halfExtents;
+                        maxDim = Math.max(maxDim, he.x * 2, he.y * 2, he.z * 2);
                     }
-
-                    if (texScale < 100) {
-                        const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                        mats.forEach(mat => {
-                            if (!mat || typeof mat.getParameters !== 'function') return;
-                            const params = mat.getParameters();
-                            for (const key in params) {
-                                if (params[key] && params[key].data instanceof pc.Texture) {
-                                    const oldTex = params[key].data;
-                                    const newTex = downscaleTexture(oldTex, texScale);
-                                    if (newTex && newTex !== oldTex) {
-                                        params[key].data = newTex;
-                                    }
-                                    if (typeof mat.update === 'function') mat.update();
-                                }
-                            }
-                        });
-                    }
-
-                    if (mi.skinInstance) {
-                        logImport("Skipped cache for skinned mesh: " + ((mi.mesh && mi.mesh.name) || 'unnamed'));
-                        return;
-                    }
-
-                    try {
-                        const pos = mi.mesh.getPositions ? mi.mesh.getPositions() : null;
-                        if (pos) {
-                            const idx = mi.mesh.getIndices ? (mi.mesh.getIndices() || []) : [];
+                    if (mi.mesh && mi.mesh.getPositions) {
+                        try {
+                            const pos = mi.mesh.getPositions();
+                            const idx = mi.mesh.getIndices ? mi.mesh.getIndices() : null;
                             const uvs = mi.mesh.getUvs ? mi.mesh.getUvs() : null;
                             const nrm = mi.mesh.getNormals ? mi.mesh.getNormals() : null;
-                            meshCacheArr.push({
-                                pos: Array.from(pos),
-                                idx: Array.from(idx),
-                                uvs: uvs ? Array.from(uvs) : null,
-                                normals: nrm ? Array.from(nrm) : null
-                            });
+                            if (pos && pos.length > 0) {
+                                meshCacheList.push({
+                                    pos: Array.from(pos),
+                                    idx: idx ? Array.from(idx) : [],
+                                    uvs: uvs ? Array.from(uvs) : null,
+                                    normals: nrm ? Array.from(nrm) : null
+                                });
+                            }
+                        } catch (e) {
+                            logImport("Cache mesh skip (" + miIdx + "): " + e.message);
                         }
-                    } catch (ce) {
-                        logImport("Cache import fail: " + ce.message);
                     }
+
+                    const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
+                    mats.forEach(m => {
+                        if (!m) return;
+                        if (m.diffuseMap) m.diffuseMap = downscaleTexture(m.diffuseMap, 1024);
+                        if (m.normalMap) m.normalMap = downscaleTexture(m.normalMap, 1024);
+                        if (m.emissiveMap) m.emissiveMap = downscaleTexture(m.emissiveMap, 1024);
+                        if (typeof m.update === 'function') m.update();
+                    });
                 });
             });
 
-            entity._meshCache = meshCacheArr;
-            entity.setLocalScale(1, 1, 1);
-            entity.setPosition(0, 0, 0);
-            entity.setEulerAngles(0, 180, 0);
+            if (meshCacheList.length > 0) {
+                entity._meshCache = meshCacheList;
+                meshCachePool.set(entity.name, meshCacheList);
+            }
+
+            if (maxDim > 0) {
+                const targetSize = 2.0;
+                if (maxDim > 6.0 || maxDim < 0.25) {
+                    const autoScale = targetSize / maxDim;
+                    entity.setLocalScale(autoScale, autoScale, autoScale);
+                    logImport("📏 Auto-scale diterapkan: " + autoScale.toFixed(3) + " (maxDim=" + maxDim.toFixed(2) + ")");
+                }
+            }
+
+            const morphInfo = extractMorphData(entity);
+            if (morphInfo.morphInstance) {
+                entity._morphInstance = morphInfo.morphInstance;
+            }
+            if (morphInfo.morphNames.length > 0) {
+                entity._morphNames = morphInfo.morphNames;
+                logImport("🎭 Morph targets ditemukan: " + morphInfo.morphNames.length);
+            }
+
+            if (Array.isArray(container.animations) && container.animations.length > 0) {
+                entity._animAssets = container.animations;
+                entity._animNames = container.animations.map((a, idx) => (a && a.name) ? a.name : ('Anim_' + idx));
+                logImport("🎬 Animasi ditemukan: " + entity._animNames.length);
+            }
+
             entity._baseScale = entity.getLocalScale().clone();
             entity._baseRot = entity.getEulerAngles().clone();
 
-            app.root.addChild(entity);
+            pcApp.root.addChild(entity);
             S.objects.push(entity);
-            if (typeof meshCachePool !== 'undefined' && meshCachePool && typeof meshCachePool.set === 'function') {
-                meshCachePool.set(entity.name, meshCacheArr);
-            }
 
             if (typeof saveState === 'function') saveState();
             if (typeof updateTree === 'function') updateTree();
             if (typeof selectObject === 'function') selectObject(entity);
-            setImportStatus("✓ Berhasil import: " + fileName);
+            if (window.CameraControls && typeof window.CameraControls.focusOn === 'function') {
+                window.CameraControls.focusOn(entity);
+            }
 
-            if (isBlobUrl) setTimeout(() => URL.revokeObjectURL(url), 2000);
-        } catch (renderErr) {
-            logImport("IMPORT ERROR: " + renderErr.message + "\nSTACK: " + (renderErr.stack || ''));
-            alert("Gagal memproses model. Cek Debug Log (🐛) atau tekan Save Log.");
-            if (loadedAsset) app.assets.remove(loadedAsset);
-            if (isBlobUrl) URL.revokeObjectURL(url);
+            setImportStatus("✅ Berhasil import: " + entity.name);
+            logImport("✅ Import sukses: " + entity.name);
+        } catch (err) {
+            logImport("❌ Process asset error: " + err.message + "\n" + (err.stack || ""));
+            alert("Gagal memproses model: " + err.message);
+            setImportStatus("⚠ Gagal import: " + err.message);
         } finally {
+            showLoading(false);
             S.isLoadingModel = false;
-            showImportLoading(false);
-            setImportControlsDisabled(false);
         }
-    });
-
-    asset.on('error', (err) => {
-        logImport("ASSET ERROR: " + err);
-        alert("Gagal memuat file. Format GLB mungkin tidak didukung (Draco) atau korup.");
-        app.assets.remove(asset);
-        if (isBlobUrl) URL.revokeObjectURL(url);
-        S.isLoadingModel = false;
-        showImportLoading(false);
-        setImportControlsDisabled(false);
-    });
-
-    try {
-        app.assets.add(asset);
-        app.assets.load(asset);
-    } catch (e) {
-        logImport("Asset add/load failed: " + e.message);
-        S.isLoadingModel = false;
-        showImportLoading(false);
-        setImportControlsDisabled(false);
-        if (isBlobUrl) URL.revokeObjectURL(url);
     }
-}
-window.loadModelFromUrl = loadModelFromUrl;
 
-const triggerFileChooser = () => {
-    const fileInput = document.getElementById('file');
-    if (fileInput) fileInput.click();
-};
+    function loadModelFromUrlOrBlob(url, fileName) {
+        const pcApp = getImportApp();
+        if (!pcApp || !pcApp.assets) {
+            alert("PlayCanvas belum siap.");
+            return;
+        }
+        if (S.isLoadingModel) {
+            setImportStatus("⚠ Sedang memuat model lain, harap tunggu...");
+            return;
+        }
 
-['btnImport', 'importMenu', 'import'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.onclick = triggerFileChooser;
-});
+        S.isLoadingModel = true;
+        showLoading(true, "Memuat " + (fileName || "model") + "...");
+        setImportStatus("Memuat model: " + (fileName || url) + "...");
 
-const fileInputEl = document.getElementById('file');
-if (fileInputEl) {
-    fileInputEl.onchange = (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        if (file.size === 0) { alert("File kosong!"); e.target.value = ''; return; }
-        const maxSize = (typeof CONFIG !== 'undefined' && CONFIG.MAX_IMPORT_SIZE) ? CONFIG.MAX_IMPORT_SIZE : (20 * 1024 * 1024);
-        if (file.size > maxSize) { alert("File > 20 MB!"); e.target.value = ''; return; }
-        const url = URL.createObjectURL(file);
-        loadModelFromUrl(file.name, url, true);
-        e.target.value = '';
+        const safeName = (fileName || 'imported_model.glb') + '_' + Date.now();
+        const asset = new pc.Asset(safeName, 'container', { url: url });
+
+        const cleanup = () => {
+            if (url && url.startsWith('blob:')) {
+                try { URL.revokeObjectURL(url); } catch (e) {}
+            }
+        };
+
+        asset.once('load', function (loadedAsset) {
+            cleanup();
+            processLoadedAsset(loadedAsset, fileName || safeName);
+        });
+
+        asset.once('error', function (err) {
+            cleanup();
+            showLoading(false);
+            S.isLoadingModel = false;
+            const errMsg = (typeof err === 'string') ? err : ((err && err.message) || 'Gagal memuat file model');
+            logImport("❌ Asset load error: " + errMsg);
+            alert("Gagal memuat model:\n" + errMsg);
+            setImportStatus("⚠ Gagal memuat model");
+        });
+
+        pcApp.assets.add(asset);
+        pcApp.assets.load(asset);
+    }
+
+    window.loadModelFromIntent = function (fileUrl) {
+        if (!fileUrl) return;
+        const cleanName = String(fileUrl).split('/').pop().split('?')[0] || 'intent_model.glb';
+        logImport("📥 Intent model diterima: " + cleanName);
+        loadModelFromUrlOrBlob(fileUrl, cleanName);
     };
-}
 
-window.loadModelFromIntent = function (fileUrl) {
-    try {
-        const rawLast = String(fileUrl || '').split('/').pop().split('?')[0];
-        const fileName = decodeURIComponent(rawLast || 'intent_model.glb');
-        logImport("Intent model detected: " + fileName);
-        loadModelFromUrl(fileName, fileUrl, false);
-    } catch (e) {
-        logImport("loadModelFromIntent error: " + e.message);
+    const fileInput = document.getElementById('file');
+    if (fileInput) {
+        fileInput.onchange = (e) => {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            e.target.value = '';
+
+            const maxSize = (typeof window.CONFIG !== 'undefined' && window.CONFIG && window.CONFIG.MAX_IMPORT_SIZE)
+                ? window.CONFIG.MAX_IMPORT_SIZE
+                : (20 * 1024 * 1024);
+
+            if (file.size > maxSize) {
+                const mb = (file.size / (1024 * 1024)).toFixed(1);
+                const limitMb = (maxSize / (1024 * 1024)).toFixed(0);
+                alert("File terlalu besar (" + mb + " MB).\nBatas aman di perangkat mobile adalah " + limitMb + " MB.");
+                return;
+            }
+
+            const blobUrl = URL.createObjectURL(file);
+            loadModelFromUrlOrBlob(blobUrl, file.name);
+        };
     }
-};
+
+    logImport("✅ import.js loaded");
+})();
