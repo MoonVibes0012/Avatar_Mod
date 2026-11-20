@@ -1,318 +1,349 @@
 /* ===== VTuber Forge — js/tracking/face.js ===== */
-// Face Tracking dengan MediaPipe + Kalidokit (Offline/Lokal)
+// Face Tracking via kamera depan menggunakan MediaPipe FaceMesh + Kalidokit
 
-let faceMesh = null;
-let cameraStream = null;
-let isFaceTracking = false;
-let faceSensitivity = 1.0;
-let faceSmoothing = 0.5;
-let faceRafId = null;
+(function () {
+    'use strict';
 
-const smoothedHead = { x: 0, y: 0, z: 0, initialized: false };
-const smoothedMorphs = new Map();
+    let faceTrackingActive = false;
+    let faceMeshInstance = null;
+    let cameraStream = null;
+    let videoElement = null;
+    let animFrameId = null;
+    let isProcessingFrame = false;
 
-function setFaceStatus(msg) {
-    const el = document.getElementById('status');
-    if (el) el.textContent = msg;
-}
+    let headBone = null;
+    let neckBone = null;
+    let headBindEuler = null;
+    let neckBindEuler = null;
+    let targetHeadRot = { x: 0, y: 0, z: 0 };
+    let currentHeadRot = { x: 0, y: 0, z: 0 };
 
-function logFace(msg) {
-    if (typeof window.dbg === 'function') {
-        try { window.dbg(msg); } catch (e) {}
-    } else if (typeof console !== 'undefined') {
-        console.log(msg);
+    function byId(id) {
+        return document.getElementById(id);
     }
-}
 
-function getKalidokitFaceSolver() {
-    if (typeof window.Kalidokit !== 'undefined' && window.Kalidokit && window.Kalidokit.Face) {
-        return window.Kalidokit.Face;
+    function setFaceStatus(msg) {
+        const el = byId('status');
+        if (el) el.textContent = msg;
     }
-    if (typeof window.KalidoKit !== 'undefined' && window.KalidoKit && window.KalidoKit.Face) {
-        return window.KalidoKit.Face;
+
+    function logFace(msg) {
+        if (typeof window.dbg === 'function') {
+            try { window.dbg(msg); } catch (e) {}
+        } else if (typeof console !== 'undefined') {
+            console.log(msg);
+        }
     }
-    return null;
-}
 
-function smoothValue(prev, next, smoothing) {
-    const s = Math.max(0, Math.min(0.95, Number(smoothing) || 0));
-    const alpha = 1 - s;
-    return prev + (next - prev) * alpha;
-}
-
-function resetFaceSmoothingState() {
-    smoothedHead.x = 0;
-    smoothedHead.y = 0;
-    smoothedHead.z = 0;
-    smoothedHead.initialized = false;
-    smoothedMorphs.clear();
-}
-
-function updateFaceTrackButtonStates() {
-    const ids = ['btnFaceTrack', 'btnFaceTrackToggle'];
-    ids.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.classList.toggle('active', !!isFaceTracking);
-    });
-}
-
-function resolveLocalMediaPipeFile(file) {
-    const cleanFile = String(file || '').replace(/^\/+/, '');
-    if (window.location && String(window.location.href || '').indexOf('file:///android_asset/') === 0) {
-        return `file:///android_asset/js/${cleanFile}`;
-    }
-    return `js/${cleanFile}`;
-}
-
-function initFaceMesh() {
-    if (faceMesh) return Promise.resolve();
-    if (typeof window.FaceMesh === 'undefined') {
-        return Promise.reject(new Error("MediaPipe FaceMesh (js/face_mesh.js) belum ter-load."));
-    }
-    return new Promise((resolve, reject) => {
+    function getFaceSelected() {
+        if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
-            faceMesh = new window.FaceMesh({
-                locateFile: (file) => resolveLocalMediaPipeFile(file)
-            });
-            faceMesh.setOptions({
-                maxNumFaces: 1,
-                refineLandmarks: true,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-            faceMesh.onResults(onFaceResults);
-            logFace("✅ MediaPipe Face Mesh initialized (local)");
-            resolve();
-        } catch (e) {
-            faceMesh = null;
-            logFace("❌ Face Mesh init error: " + e.message);
-            reject(e);
-        }
-    });
-}
-
-function findFaceMorphIndex(name) {
-    if (!S.selected || !Array.isArray(S.selected._morphNames)) return -1;
-    const lowerName = String(name || '').toLowerCase();
-    let idx = S.selected._morphNames.findIndex(n => String(n || '').toLowerCase() === lowerName);
-    if (idx >= 0) return idx;
-
-    idx = S.selected._morphNames.findIndex(n => String(n || '').toLowerCase().includes(lowerName));
-    if (idx >= 0) return idx;
-
-    const normalized = lowerName.replace(/[\s_-]/g, '');
-    idx = S.selected._morphNames.findIndex(n =>
-        String(n || '').toLowerCase().replace(/[\s_-]/g, '').includes(normalized)
-    );
-    return idx;
-}
-
-function applyFaceHeadRotation(face, renderComp) {
-    if (!face || !face.head || !renderComp || !Array.isArray(renderComp.meshInstances)) return;
-
-    const rawX = (face.head.x || 0) * faceSensitivity * (180 / Math.PI);
-    const rawY = (face.head.y || 0) * faceSensitivity * (180 / Math.PI);
-    const rawZ = (face.head.z || 0) * faceSensitivity * (180 / Math.PI);
-
-    if (!smoothedHead.initialized) {
-        smoothedHead.x = rawX;
-        smoothedHead.y = rawY;
-        smoothedHead.z = rawZ;
-        smoothedHead.initialized = true;
-    } else {
-        smoothedHead.x = smoothValue(smoothedHead.x, rawX, faceSmoothing);
-        smoothedHead.y = smoothValue(smoothedHead.y, rawY, faceSmoothing);
-        smoothedHead.z = smoothValue(smoothedHead.z, rawZ, faceSmoothing);
-    }
-
-    for (const mi of renderComp.meshInstances) {
-        if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-            const headBone = mi.skinInstance.bones.find(b => {
-                const bName = ((b && b.name) || '').toLowerCase();
-                return bName.includes('head') || bName.includes('neck');
-            });
-            if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
-                headBone.setLocalEulerAngles(smoothedHead.x, smoothedHead.y, smoothedHead.z);
-            }
-            break;
-        }
-    }
-}
-
-function onFaceResults(results) {
-    if (!isFaceTracking || !results || !Array.isArray(results.multiFaceLandmarks) || results.multiFaceLandmarks.length === 0) {
-        return;
-    }
-    if (!S.selected) return;
-
-    const faceSolver = getKalidokitFaceSolver();
-    if (!faceSolver || typeof faceSolver.solve !== 'function') return;
-
-    try {
-        const faceLandmarks = results.multiFaceLandmarks[0];
-        const face = faceSolver.solve(faceLandmarks, { runtime: 'mediapipe', video: null });
-        if (!face) return;
-
-        const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
-        applyFaceHeadRotation(face, renderComp);
-
-        if (S.selected._morphInstance && Array.isArray(S.selected._morphNames)) {
-            applyFaceBlendshapes(face);
-        }
-    } catch (e) {
-        logFace("Face tracking error: " + e.message);
-    }
-}
-
-function applyFaceBlendshapes(face) {
-    if (!S.selected || !S.selected._morphInstance || !Array.isArray(S.selected._morphNames)) return;
-
-    const morphMap = {
-        eyeBlinkLeft: ['eye_blink_l', 'blink_l', 'eye_close_l'],
-        eyeBlinkRight: ['eye_blink_r', 'blink_r', 'eye_close_r'],
-        jawOpen: ['mouth_open', 'aa', 'jaw_open'],
-        mouthSmileLeft: ['smile_l', 'mouth_smile_l'],
-        mouthSmileRight: ['smile_r', 'mouth_smile_r'],
-        browInnerUp: ['brow_up', 'brow_inner']
-    };
-
-    for (const [key, possibleNames] of Object.entries(morphMap)) {
-        if (face[key] !== undefined && face[key] !== null) {
-            const rawVal = Number(face[key]) || 0;
-            const targetVal = Math.max(0, Math.min(1, rawVal * faceSensitivity));
-            for (const name of possibleNames) {
-                const idx = findFaceMorphIndex(name);
-                if (idx >= 0) {
-                    const prevVal = smoothedMorphs.has(idx) ? smoothedMorphs.get(idx) : targetVal;
-                    const value = Math.max(0, Math.min(1, smoothValue(prevVal, targetVal, faceSmoothing)));
-                    smoothedMorphs.set(idx, value);
-
-                    S.selected._morphInstance.setWeight(idx, value);
-                    const slider = document.querySelector(`#morphControls input[data-morph-idx="${idx}"]`);
-                    if (slider) {
-                        slider.value = value.toFixed(2);
-                        const label = document.getElementById('morphVal_' + idx);
-                        if (label) label.textContent = value.toFixed(2);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-}
-
-async function startFaceTracking() {
-    if (isFaceTracking) {
-        stopFaceTracking();
-        return;
-    }
-    if (!S.selected) return alert("Pilih model VRM/GLB dulu!");
-
-    const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
-    if (!renderComp || !renderComp.meshInstances) return alert("Model tidak memiliki mesh!");
-
-    const hasMorph = !!(S.selected._morphInstance && Array.isArray(S.selected._morphNames) && S.selected._morphNames.length > 0);
-    const hasSkeleton = renderComp.meshInstances.some(mi => mi && mi.skinInstance != null);
-
-    if (!hasMorph && !hasSkeleton) {
-        return alert("Model butuh blendshapes atau skeleton untuk face tracking!");
-    }
-
-    if (!getKalidokitFaceSolver()) {
-        return alert("Library Kalidokit (js/kalidokit.umd.js) tidak tersedia. Periksa file di folder assets/js/.");
-    }
-
-    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-        return alert("Kamera tidak didukung di perangkat atau konteks ini.");
-    }
-
-    try {
-        resetFaceSmoothingState();
-        setFaceStatus("Menginisialisasi Face Tracking...");
-        await initFaceMesh();
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480, facingMode: 'user' }
-        });
-        cameraStream = stream;
-
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.setAttribute('playsinline', '');
-        video.muted = true;
-        await video.play();
-
-        isFaceTracking = true;
-
-        async function processFrame() {
-            if (!isFaceTracking) return;
-            try {
-                if (video.readyState >= 2 && faceMesh && typeof faceMesh.send === 'function') {
-                    await faceMesh.send({ image: video });
-                }
-            } catch (frameErr) {
-                logFace("Face frame error: " + frameErr.message);
-            }
-            if (isFaceTracking) {
-                faceRafId = requestAnimationFrame(processFrame);
-            }
-        }
-
-        faceRafId = requestAnimationFrame(processFrame);
-        updateFaceTrackButtonStates();
-
-        setFaceStatus("✅ Face Tracking aktif!");
-        logFace("✅ Face tracking started");
-    } catch (e) {
-        logFace("❌ Face tracking error: " + e.message);
-        alert("Gagal start face tracking: " + e.message);
-        stopFaceTracking();
-    }
-}
-window.startFaceTracking = startFaceTracking;
-
-function stopFaceTracking() {
-    isFaceTracking = false;
-    if (faceRafId !== null) {
-        cancelAnimationFrame(faceRafId);
-        faceRafId = null;
-    }
-    if (cameraStream) {
-        try {
-            cameraStream.getTracks().forEach(track => track.stop());
+            if (typeof S !== 'undefined' && S && S.selected) return S.selected;
         } catch (e) {}
-        cameraStream = null;
+        return null;
     }
-    resetFaceSmoothingState();
-    updateFaceTrackButtonStates();
-    setFaceStatus("Face Tracking dinonaktifkan");
-    logFace("⏹ Face tracking stopped");
-}
-window.stopFaceTracking = stopFaceTracking;
 
-['btnFaceTrack', 'btnFaceTrackToggle'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.onclick = startFaceTracking;
-});
+    function updateFaceButtonsState(active) {
+        const btnTop = byId('btnFaceTrack');
+        const btnPanel = byId('btnFaceTrackToggle');
+        if (btnTop) btnTop.classList.toggle('active', !!active);
+        if (btnPanel) btnPanel.classList.toggle('active', !!active);
+    }
 
-const sensSlider = document.getElementById('faceSensitivity');
-if (sensSlider) {
-    sensSlider.oninput = (e) => {
-        const parsed = parseFloat(e.target.value);
-        if (isFinite(parsed)) faceSensitivity = Math.max(0.1, Math.min(2.5, parsed));
-        const out = document.getElementById('faceSensitivityOut');
-        if (out) out.textContent = faceSensitivity.toFixed(2);
+    function findHeadAndNeckBones(entity) {
+        headBone = null;
+        neckBone = null;
+        headBindEuler = null;
+        neckBindEuler = null;
+        if (!entity || typeof entity.findComponent !== 'function') return;
+
+        const rc = entity.findComponent('render');
+        if (!rc || !Array.isArray(rc.meshInstances)) return;
+
+        for (const mi of rc.meshInstances) {
+            if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
+                const bones = mi.skinInstance.bones;
+                for (let i = 0; i < bones.length; i++) {
+                    const b = bones[i];
+                    if (!b || !b.name) continue;
+                    const lower = b.name.toLowerCase();
+                    if (!headBone && (lower.includes('head') || lower.includes('kepala'))) {
+                        headBone = b;
+                        if (typeof b.getLocalEulerAngles === 'function') {
+                            const r = b.getLocalEulerAngles();
+                            headBindEuler = (r && typeof r.clone === 'function') ? r.clone() : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
+                        }
+                    } else if (!neckBone && (lower.includes('neck') || lower.includes('leher'))) {
+                        neckBone = b;
+                        if (typeof b.getLocalEulerAngles === 'function') {
+                            const r = b.getLocalEulerAngles();
+                            neckBindEuler = (r && typeof r.clone === 'function') ? r.clone() : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
+                        }
+                    }
+                }
+                if (headBone) break;
+            }
+        }
+    }
+
+    function applyFaceHeadRotation() {
+        const selected = getFaceSelected();
+        if (!selected || !faceTrackingActive) return;
+
+        const smooth = 0.25;
+        currentHeadRot.x += (targetHeadRot.x - currentHeadRot.x) * smooth;
+        currentHeadRot.y += (targetHeadRot.y - currentHeadRot.y) * smooth;
+        currentHeadRot.z += (targetHeadRot.z - currentHeadRot.z) * smooth;
+
+        if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
+            const base = headBindEuler || { x: 0, y: 0, z: 0 };
+            headBone.setLocalEulerAngles(
+                base.x + currentHeadRot.x,
+                base.y + currentHeadRot.y,
+                base.z + currentHeadRot.z
+            );
+            if (neckBone && typeof neckBone.setLocalEulerAngles === 'function') {
+                const nBase = neckBindEuler || { x: 0, y: 0, z: 0 };
+                neckBone.setLocalEulerAngles(
+                    nBase.x + currentHeadRot.x * 0.35,
+                    nBase.y + currentHeadRot.y * 0.35,
+                    nBase.z + currentHeadRot.z * 0.35
+                );
+            }
+        } else if (typeof selected.setEulerAngles === 'function') {
+            const base = selected._baseRot || { x: 0, y: 0, z: 0 };
+            selected.setEulerAngles(
+                base.x + currentHeadRot.x * 0.5,
+                base.y + currentHeadRot.y * 0.5,
+                base.z + currentHeadRot.z * 0.5
+            );
+        }
+    }
+
+    function onFaceMeshResults(results) {
+        if (!faceTrackingActive) return;
+
+        const landmarks = results && results.multiFaceLandmarks && results.multiFaceLandmarks[0];
+        if (!landmarks) {
+            return;
+        }
+
+        const KalidoKitRef = (typeof window.Kalidokit !== 'undefined')
+            ? window.Kalidokit
+            : ((typeof window.KalidoKit !== 'undefined') ? window.KalidoKit : null);
+
+        if (KalidoKitRef && KalidoKitRef.Face && typeof KalidoKitRef.Face.solve === 'function') {
+            try {
+                const solved = KalidoKitRef.Face.solve(landmarks, {
+                    runtime: 'mediapipe',
+                    video: videoElement,
+                    imageSize: {
+                        width: (videoElement && videoElement.videoWidth) || 320,
+                        height: (videoElement && videoElement.videoHeight) || 240
+                    },
+                    smoothBlink: true
+                });
+
+                if (solved && solved.head) {
+                    const radToDeg = 180 / Math.PI;
+                    const pitch = (solved.head.x || 0) * radToDeg * 0.7;
+                    const yaw = (solved.head.y || 0) * radToDeg * 0.7;
+                    const roll = (solved.head.z || 0) * radToDeg * 0.5;
+                    targetHeadRot = {
+                        x: Math.max(-35, Math.min(35, pitch)),
+                        y: Math.max(-45, Math.min(45, yaw)),
+                        z: Math.max(-30, Math.min(30, roll))
+                    };
+                }
+
+                const selected = getFaceSelected();
+                if (solved && solved.eye && selected && selected._morphInstance && Array.isArray(selected._morphNames)) {
+                    const blinkVal = Math.max(0, Math.min(1, 1 - Math.min(solved.eye.l || 1, solved.eye.r || 1)));
+                    selected._morphNames.forEach((name, idx) => {
+                        const lower = String(name || '').toLowerCase();
+                        if (lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose')) {
+                            try {
+                                if (typeof selected._morphInstance.setWeight === 'function') {
+                                    selected._morphInstance.setWeight(idx, blinkVal);
+                                }
+                            } catch (e) {}
+                        }
+                    });
+                }
+            } catch (e) {}
+        } else {
+            const noseTip = landmarks[1] || landmarks[4];
+            if (noseTip) {
+                const yaw = (0.5 - noseTip.x) * 60;
+                const pitch = (noseTip.y - 0.5) * 45;
+                targetHeadRot = {
+                    x: Math.max(-30, Math.min(30, pitch)),
+                    y: Math.max(-40, Math.min(40, yaw)),
+                    z: 0
+                };
+            }
+        }
+
+        applyFaceHeadRotation();
+    }
+
+    async function processVideoFrameLoop() {
+        if (!faceTrackingActive) return;
+
+        if (videoElement && faceMeshInstance && !isProcessingFrame && videoElement.readyState >= 2) {
+            isProcessingFrame = true;
+            try {
+                await faceMeshInstance.send({ image: videoElement });
+            } catch (e) {
+            } finally {
+                isProcessingFrame = false;
+            }
+        }
+
+        animFrameId = requestAnimationFrame(processVideoFrameLoop);
+    }
+
+    async function startFaceTracking() {
+        if (faceTrackingActive) return;
+
+        const selected = getFaceSelected();
+        if (!selected) {
+            alert("Pilih karakter/model VRM/GLB dulu sebelum mengaktifkan Face Tracking!");
+            return;
+        }
+
+        if (typeof window.FaceMesh === 'undefined') {
+            alert("MediaPipe FaceMesh tidak tersedia di perangkat ini.");
+            logFace("⚠ FaceMesh undefined");
+            return;
+        }
+
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+            alert("Kamera tidak didukung di WebView/browser ini.");
+            return;
+        }
+
+        try {
+            setFaceStatus("📷 Membuka kamera depan...");
+            logFace("📷 Requesting front camera...");
+
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: 'user',
+                    width: { ideal: 320 },
+                    height: { ideal: 240 }
+                },
+                audio: false
+            });
+
+            videoElement = document.createElement('video');
+            videoElement.setAttribute('playsinline', '');
+            videoElement.setAttribute('autoplay', '');
+            videoElement.playsInline = true;
+            videoElement.autoplay = true;
+            videoElement.muted = true;
+            videoElement.srcObject = cameraStream;
+            await videoElement.play();
+
+            findHeadAndNeckBones(selected);
+
+            if (!faceMeshInstance) {
+                faceMeshInstance = new window.FaceMesh({
+                    locateFile: (file) => 'js/' + file
+                });
+                faceMeshInstance.setOptions({
+                    maxNumFaces: 1,
+                    refineLandmarks: false,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                faceMeshInstance.onResults(onFaceMeshResults);
+            }
+
+            faceTrackingActive = true;
+            updateFaceButtonsState(true);
+            setFaceStatus("📷 Face Tracking aktif — hadapkan wajah ke kamera");
+            logFace("✅ Face tracking started");
+
+            animFrameId = requestAnimationFrame(processVideoFrameLoop);
+        } catch (err) {
+            logFace("❌ Face tracking start error: " + err.message);
+            stopFaceTracking();
+            alert("Gagal mengaktifkan kamera Face Tracking:\n" + err.message);
+        }
+    }
+
+    function stopFaceTracking() {
+        faceTrackingActive = false;
+        isProcessingFrame = false;
+
+        if (animFrameId !== null) {
+            cancelAnimationFrame(animFrameId);
+            animFrameId = null;
+        }
+
+        if (cameraStream) {
+            try {
+                cameraStream.getTracks().forEach(track => {
+                    try { track.stop(); } catch (e) {}
+                });
+            } catch (e) {}
+            cameraStream = null;
+        }
+
+        if (videoElement) {
+            try {
+                videoElement.pause();
+                videoElement.srcObject = null;
+                if (typeof videoElement.remove === 'function') videoElement.remove();
+            } catch (e) {}
+            videoElement = null;
+        }
+
+        targetHeadRot = { x: 0, y: 0, z: 0 };
+        currentHeadRot = { x: 0, y: 0, z: 0 };
+
+        if (headBone && headBindEuler && typeof headBone.setLocalEulerAngles === 'function') {
+            try { headBone.setLocalEulerAngles(headBindEuler.x, headBindEuler.y, headBindEuler.z); } catch (e) {}
+        }
+        if (neckBone && neckBindEuler && typeof neckBone.setLocalEulerAngles === 'function') {
+            try { neckBone.setLocalEulerAngles(neckBindEuler.x, neckBindEuler.y, neckBindEuler.z); } catch (e) {}
+        }
+
+        headBone = null;
+        neckBone = null;
+        headBindEuler = null;
+        neckBindEuler = null;
+
+        updateFaceButtonsState(false);
+        setFaceStatus("📷 Face Tracking dimatikan");
+        logFace("⏹ Face tracking stopped");
+    }
+
+    function toggleFaceTracking() {
+        if (faceTrackingActive) {
+            stopFaceTracking();
+        } else {
+            startFaceTracking();
+        }
+    }
+
+    const btnTop = byId('btnFaceTrack');
+    if (btnTop) btnTop.onclick = toggleFaceTracking;
+
+    const btnPanel = byId('btnFaceTrackToggle');
+    if (btnPanel) btnPanel.onclick = toggleFaceTracking;
+
+    window.addEventListener('beforeunload', () => {
+        if (faceTrackingActive) stopFaceTracking();
+    });
+
+    window.FaceTracking = {
+        start: startFaceTracking,
+        stop: stopFaceTracking,
+        toggle: toggleFaceTracking,
+        isActive: () => faceTrackingActive
     };
-}
 
-const smoothSlider = document.getElementById('faceSmoothing');
-if (smoothSlider) {
-    smoothSlider.oninput = (e) => {
-        const parsed = parseFloat(e.target.value);
-        if (isFinite(parsed)) faceSmoothing = Math.max(0, Math.min(0.95, parsed));
-        const out = document.getElementById('faceSmoothingOut');
-        if (out) out.textContent = faceSmoothing.toFixed(2);
-    };
-}
-
-logFace("✅ faceTracking.js loaded");
+    logFace("✅ face.js loaded");
+})();
