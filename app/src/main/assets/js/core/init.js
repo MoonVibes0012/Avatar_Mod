@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/core/init.js ===== */
-// Inisialisasi aplikasi, canvas, scene dasar, dan render loop
+// Inisialisasi aplikasi, canvas, scene dasar, pencahayaan, dan render loop
 
 (function () {
     'use strict';
@@ -87,6 +87,9 @@
     app.setCanvasResolution(pc.RESOLUTION_AUTO);
     app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2.0);
     app.graphicsDevice.precision = 'highp';
+    if (typeof app.resizeCanvas === 'function') {
+        try { app.resizeCanvas(); } catch (e) {}
+    }
 
     window.resetCameraGesture = function () {
         if (window.CameraControls) {
@@ -123,32 +126,35 @@
     window.isAppReady = true;
 
     const pivot = new pc.Entity('cameraPivot');
+    pivot.setPosition(0, 1.1, 0);
     app.root.addChild(pivot);
 
     const camera = new pc.Entity('camera');
     camera.addComponent('camera', {
-        clearColor: new pc.Color(0.03, 0.03, 0.04),
-        farClip: 150,
-        nearClip: 0.5
+        clearColor: new pc.Color(0.06, 0.06, 0.09),
+        farClip: 200,
+        nearClip: 0.1
     });
+    camera.setPosition(0, 2.0, 4.5);
+    camera.lookAt(0, 1.1, 0);
     pivot.addChild(camera);
 
-    app.scene.ambientLight = new pc.Color(0.4, 0.4, 0.4);
+    app.scene.ambientLight = new pc.Color(0.65, 0.65, 0.7);
 
-    const light = new pc.Entity('light');
-    light.addComponent('light', { type: 'directional', castShadows: false, intensity: 1.0 });
-    light.setEulerAngles(45, 30, 0);
-    app.root.addChild(light);
+    const keyLight = new pc.Entity('light');
+    keyLight.addComponent('light', { type: 'directional', castShadows: false, intensity: 1.35 });
+    keyLight.setEulerAngles(40, 35, 0);
+    app.root.addChild(keyLight);
 
     const fillLight = new pc.Entity('fillLight');
-    fillLight.addComponent('light', { type: 'directional', intensity: 0.5 });
-    fillLight.setEulerAngles(-45, -30, 0);
+    fillLight.addComponent('light', { type: 'directional', castShadows: false, intensity: 0.85 });
+    fillLight.setEulerAngles(-35, -135, 0);
     app.root.addChild(fillLight);
 
     const ground = new pc.Entity('ground');
     ground.addComponent('render', { type: 'plane' });
     const matG = new pc.StandardMaterial();
-    matG.diffuse = new pc.Color(0.1, 0.1, 0.15);
+    matG.diffuse = new pc.Color(0.16, 0.16, 0.22);
     if (typeof matG.update === 'function') matG.update();
     ground.render.material = matG;
     ground.setLocalScale(20, 1, 20);
@@ -169,7 +175,7 @@
             if (v === 'light') c = new pc.Color(1, 1, 1);
             else if (v === 'green') c = new pc.Color(0, 1, 0);
             else if (v === 'blue') c = new pc.Color(0, 0, 1);
-            else c = new pc.Color(0.03, 0.03, 0.04);
+            else c = new pc.Color(0.06, 0.06, 0.09);
             if (camera.camera) {
                 camera.camera.clearColor = c;
             }
