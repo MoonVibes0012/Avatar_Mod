@@ -6,9 +6,41 @@
 
     const MODAL_ID = 'gpuSettingsModal';
     let isOpen = false;
+    let escBound = false;
 
     function byId(id) {
         return document.getElementById(id);
+    }
+
+    function renderDeviceInfo(container, d, s) {
+        if (!container) return;
+        container.textContent = '';
+
+        const row1 = document.createElement('div');
+        const b1 = document.createElement('strong');
+        b1.textContent = 'Renderer: ';
+        row1.appendChild(b1);
+        row1.appendChild(document.createTextNode(d.renderer || 'WebGL'));
+
+        const row2 = document.createElement('div');
+        const b2 = document.createElement('strong');
+        b2.textContent = 'DPR Aktif: ';
+        const b3 = document.createElement('strong');
+        b3.textContent = 'Precision: ';
+        row2.appendChild(b2);
+        row2.appendChild(document.createTextNode(Number(d.maxPixelRatio || s.maxPixelRatio || 1).toFixed(2) + ' | '));
+        row2.appendChild(b3);
+        row2.appendChild(document.createTextNode((d.precision || s.precision || 'mediump') + (d.precisionNeedsReload ? ' (reload utk ubah)' : '')));
+
+        const row3 = document.createElement('div');
+        const b4 = document.createElement('strong');
+        b4.textContent = 'Status Context: ';
+        row3.appendChild(b4);
+        row3.appendChild(document.createTextNode((d.lastGpuEvent || 'Normal') + ' (Lost: ' + (d.contextLostCount || 0) + ')'));
+
+        container.appendChild(row1);
+        container.appendChild(row2);
+        container.appendChild(row3);
     }
 
     function ensureModal() {
@@ -38,7 +70,7 @@
             '  </div>',
             '  <div id="gpuDeviceInfo" style="background:#10121a;border:1px solid #232838;border-radius:7px;padding:8px;margin-bottom:10px;font-size:11px;line-height:1.45;color:#cbd5e1;">Memuat info GPU...</div>',
             '  <div style="margin-bottom:10px;">',
-            '    <label style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Preset Stabilitas</label>',
+            '    <label for="gpuPresetSelect" style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Preset Stabilitas</label>',
             '    <select id="gpuPresetSelect" style="width:100%;padding:7px 8px;border-radius:6px;background:#0e1017;color:#fff;border:1px solid #333a52;">',
             '      <option value="balanced">Balanced (MP3 Friendly)</option>',
             '      <option value="stability">Max Stability (Low VRAM/GPU)</option>',
@@ -47,13 +79,13 @@
             '  </div>',
             '  <div style="margin-bottom:10px;">',
             '    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;">',
-            '      <span style="color:#94a3b8;">Max Pixel Ratio (DPR Cap)</span>',
+            '      <label for="gpuDprRange" style="color:#94a3b8;">Max Pixel Ratio (DPR Cap)</label>',
             '      <span id="gpuDprVal">1.50</span>',
             '    </div>',
             '    <input id="gpuDprRange" type="range" min="0.75" max="2.5" step="0.25" value="1.5" style="width:100%;">',
             '  </div>',
             '  <div style="margin-bottom:10px;">',
-            '    <label style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Shader Precision</label>',
+            '    <label for="gpuPrecisionSelect" style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Shader Precision (Preferensi)</label>',
             '    <select id="gpuPrecisionSelect" style="width:100%;padding:7px 8px;border-radius:6px;background:#0e1017;color:#fff;border:1px solid #333a52;">',
             '      <option value="mediump">mediump (Lebih stabil & hemat GPU)</option>',
             '      <option value="highp">highp (Presisi tinggi)</option>',
@@ -61,7 +93,7 @@
             '  </div>',
             '  <div style="margin-bottom:10px;">',
             '    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;">',
-            '      <span style="color:#94a3b8;">Ambient Light</span>',
+            '      <label for="gpuAmbientRange" style="color:#94a3b8;">Ambient Light</label>',
             '      <span id="gpuAmbientVal">0.65</span>',
             '    </div>',
             '    <input id="gpuAmbientRange" type="range" min="0.1" max="1.2" step="0.05" value="0.65" style="width:100%;">',
@@ -86,6 +118,15 @@
         modal.addEventListener('click', function (e) {
             if (e.target === modal) setModalOpen(false);
         });
+
+        if (!escBound) {
+            escBound = true;
+            document.addEventListener('keydown', function (e) {
+                if (isOpen && e.key === 'Escape') {
+                    setModalOpen(false);
+                }
+            });
+        }
 
         byId('gpuCloseBtn').onclick = function () {
             setModalOpen(false);
@@ -145,19 +186,16 @@
     }
 
     function syncControlsFromInfo() {
-        if (!window.GpuStability || typeof window.GpuStability.getInfo !== 'function') return;
+        const infoBox = byId('gpuDeviceInfo');
+        if (!window.GpuStability || typeof window.GpuStability.getInfo !== 'function') {
+            if (infoBox) infoBox.textContent = 'Modul GpuStability belum siap...';
+            return;
+        }
         const info = window.GpuStability.getInfo();
         const s = info.settings || {};
         const d = info.device || {};
 
-        const infoBox = byId('gpuDeviceInfo');
-        if (infoBox) {
-            infoBox.innerHTML = [
-                '<div><b>Renderer:</b> ' + (d.renderer || 'WebGL') + '</div>',
-                '<div><b>DPR Aktif:</b> ' + Number(d.maxPixelRatio || s.maxPixelRatio || 1).toFixed(2) + ' | <b>Precision:</b> ' + (d.precision || s.precision || 'mediump') + '</div>',
-                '<div><b>Status Context:</b> ' + (d.lastGpuEvent || 'Normal') + ' (Lost: ' + (d.contextLostCount || 0) + ')</div>'
-            ].join('');
-        }
+        renderDeviceInfo(infoBox, d, s);
 
         if (byId('gpuPresetSelect')) byId('gpuPresetSelect').value = s.preset || 'balanced';
         if (byId('gpuDprRange')) {
