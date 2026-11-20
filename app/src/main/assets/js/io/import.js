@@ -81,7 +81,7 @@
         try {
             const w = tex.width || 0;
             const h = tex.height || 0;
-            if (w <= maxSize && h <= maxSize) return tex;
+            if (w <= 0 || h <= 0 || (w <= maxSize && h <= maxSize)) return tex;
 
             const src = tex.getSource ? tex.getSource() : null;
             if (!src) return tex;
