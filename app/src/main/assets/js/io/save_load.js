@@ -75,8 +75,8 @@
         try {
             const jsonStr = serializeScene(true);
             const filename = `vtuber_scene_${Date.now()}.json`;
-            if (typeof downloadNative === 'function') {
-                downloadNative(filename, jsonStr);
+            if (typeof window.downloadNative === 'function') {
+                window.downloadNative(filename, jsonStr);
             }
             setSaveLoadStatus("✓ Scene disimpan: " + filename);
         } catch (e) {
@@ -115,13 +115,17 @@
             reader.onload = (ev) => {
                 const text = ev && ev.target ? ev.target.result : '';
                 if (typeof text === 'string' && text.trim()) {
-                    if (typeof window.loadState === 'function') {
-                        window.loadState(text, false);
+                    const ok = (typeof window.loadState === 'function')
+                        ? window.loadState(text, false)
+                        : false;
+                    if (ok) {
+                        if (typeof window.saveState === 'function') window.saveState();
+                        setSaveLoadStatus("✓ Scene dimuat dari: " + file.name);
+                    } else {
+                        setSaveLoadStatus("⚠ Gagal memuat scene: format file JSON tidak valid.");
                     }
-                    if (typeof window.saveState === 'function') {
-                        window.saveState();
-                    }
-                    setSaveLoadStatus("✓ Scene dimuat dari: " + file.name);
+                } else {
+                    setSaveLoadStatus("⚠ File scene kosong.");
                 }
             };
             reader.readAsText(file);
@@ -136,8 +140,8 @@
                 ? logs.join('\n')
                 : ("VTuber Forge Log — " + new Date().toISOString() + "\n(Kosong)");
             const filename = `vtuber_debug_${Date.now()}.log`;
-            if (typeof downloadNative === 'function') {
-                downloadNative(filename, content);
+            if (typeof window.downloadNative === 'function') {
+                window.downloadNative(filename, content);
             }
         };
     }
