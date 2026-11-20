@@ -29,6 +29,24 @@
         return null;
     }
 
+    function getSelectedEntitySafe() {
+        if (typeof window.S !== 'undefined' && window.S) return window.S.selected || null;
+        try {
+            if (typeof S !== 'undefined' && S) return S.selected || null;
+        } catch (e) {}
+        return null;
+    }
+
+    function uint8ArrayToBase64(uint8Array) {
+        const chunkSize = 0x8000; // 32KB per chunk
+        const parts = [];
+        for (let i = 0; i < uint8Array.length; i += chunkSize) {
+            const slice = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
+            parts.push(String.fromCharCode.apply(null, slice));
+        }
+        return btoa(parts.join(''));
+    }
+
     function downloadNative(filename, content) {
         if (window.AndroidBridge && typeof window.AndroidBridge.saveFile === 'function') {
             try {
@@ -58,14 +76,10 @@
 
     function downloadBinary(filename, uint8Array, mimeType) {
         const safeMime = mimeType || 'application/octet-stream';
+        const bytes = (uint8Array instanceof Uint8Array) ? uint8Array : new Uint8Array(uint8Array);
         if (window.AndroidBridge && typeof window.AndroidBridge.saveBinaryFile === 'function') {
             try {
-                let binaryStr = '';
-                const bytes = uint8Array;
-                for (let i = 0; i < bytes.length; i++) {
-                    binaryStr += String.fromCharCode(bytes[i]);
-                }
-                const base64 = btoa(binaryStr);
+                const base64 = uint8ArrayToBase64(bytes);
                 window.AndroidBridge.saveBinaryFile(filename, base64, safeMime);
                 setExportStatus("✓ File binary disimpan ke Downloads: " + filename);
                 return;
@@ -74,7 +88,7 @@
             }
         }
         try {
-            const blob = new Blob([uint8Array], { type: safeMime });
+            const blob = new Blob([bytes], { type: safeMime });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -93,13 +107,14 @@
     function exportOBJ() {
         const pcApp = getExportApp();
         if (!pcApp || !pcApp.root) return alert("Scene belum siap.");
-        if (!S.selected) return alert("Pilih objek dulu!");
-        const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
+        const selected = getSelectedEntitySafe();
+        if (!selected) return alert("Pilih objek dulu!");
+        const renderComp = typeof selected.findComponent === 'function' ? selected.findComponent('render') : null;
         if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
             return alert("Objek tidak punya mesh untuk di-export ke OBJ.");
         }
 
-        let objStr = `# VTuber Forge OBJ Export\n# Object: ${S.selected.name || 'Object'}\n\n`;
+        let objStr = `# VTuber Forge OBJ Export\n# Object: ${selected.name || 'Object'}\n\n`;
         let vertexOffset = 1;
         let hasAnyGeometry = false;
 
@@ -110,7 +125,7 @@
             if (!pos || !indices || pos.length < 3 || indices.length < 3) return;
 
             hasAnyGeometry = true;
-            objStr += `o ${(S.selected.name || 'Object').replace(/\s+/g, '_')}_part${idx}\n`;
+            objStr += `o ${(selected.name || 'Object').replace(/\s+/g, '_')}_part${idx}\n`;
 
             const vCount = Math.floor(pos.length / 3);
             for (let i = 0; i < vCount; i++) {
@@ -132,7 +147,7 @@
             return alert("Data posisi/index mesh kosong atau terkompresi.");
         }
 
-        const cleanName = (S.selected.name || 'model').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const cleanName = (selected.name || 'model').replace(/[^a-zA-Z0-9_-]/g, '_');
         downloadNative(`${cleanName}.obj`, objStr);
     }
     window.exportOBJ = exportOBJ;
@@ -163,9 +178,6 @@
         }
     }
     window.takeScreenshot = takeScreenshot;
-
-    const shotBtn = document.getElementById('btnScreenshot');
-    if (shotBtn) shotBtn.onclick = takeScreenshot;
 
     logExport("✅ export.js loaded");
 })();
