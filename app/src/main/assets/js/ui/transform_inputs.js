@@ -27,8 +27,12 @@
         return snapEnabled ? Math.round(v * 2) / 2 : v;
     }
 
-    // Enter pada input langsung blur agar keyboard mobile tertutup rapi
+    // Enter pada input teks/angka/warna langsung blur agar keyboard mobile tertutup rapi
     document.querySelectorAll('input').forEach(inp => {
+        const inputType = (inp.getAttribute('type') || 'text').toLowerCase();
+        if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio' || inputType === 'file') {
+            return;
+        }
         inp.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && e.target && typeof e.target.blur === 'function') {
                 e.target.blur();
