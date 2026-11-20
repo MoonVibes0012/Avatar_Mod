@@ -1,52 +1,103 @@
 /* ===== VTuber Forge — js/ui/boot.js ===== */
-// Boot UI helper: panel drawer, overlay loading, dan pengecekan aset offline
+// Boot UI helper: panel drawer tunggal (anti double-toggle), loading overlay, & cek aset offline
 
 (function () {
     'use strict';
 
     const byId = (id) => document.getElementById(id);
 
+    function resolvePanelId(el) {
+        if (!el) return null;
+        if (el.id === 'parts') return 'left';
+        if (el.id === 'inspector') return 'right';
+        const dp = el.getAttribute('data-panel');
+        if (dp === 'left' || dp === 'right') return dp;
+        return null;
+    }
+
     function setPanel(id, open) {
+        if (id !== 'left' && id !== 'right') return;
         const panel = byId(id);
         if (!panel) return;
-        panel.classList.toggle('mobile-open', !!open);
-        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
 
-        const btn = document.querySelector(
-            '[data-panel="' + id + '"].top-btn, #' + (id === 'left' ? 'parts' : 'inspector')
-        );
-        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        const nextOpen = !!open;
+        if (nextOpen) {
+            const otherId = id === 'left' ? 'right' : 'left';
+            const otherPanel = byId(otherId);
+            if (otherPanel) {
+                otherPanel.classList.remove('mobile-open');
+                otherPanel.setAttribute('aria-hidden', 'true');
+            }
+            const otherBtn = byId(otherId === 'left' ? 'parts' : 'inspector');
+            if (otherBtn) otherBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        panel.classList.toggle('mobile-open', nextOpen);
+        panel.style.removeProperty('display');
+        panel.setAttribute('aria-hidden', nextOpen ? 'false' : 'true');
+        if (nextOpen) {
+            panel.scrollTop = 0;
+        }
+
+        const btn = byId(id === 'left' ? 'parts' : 'inspector');
+        if (btn) btn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
 
         const backdrop = byId('panelBackdrop');
         const anyOpen = !!document.querySelector('.panel.mobile-open');
         if (backdrop) backdrop.hidden = !anyOpen;
     }
 
+    function togglePanel(id) {
+        if (id !== 'left' && id !== 'right') return;
+        const panel = byId(id);
+        const isOpen = !!(panel && panel.classList.contains('mobile-open'));
+        setPanel(id, !isOpen);
+    }
+
     window.__vtfSetPanel = setPanel;
+    window.__vtfTogglePanel = togglePanel;
 
-    document.addEventListener('click', function (e) {
-        const target = e.target;
-        if (!target || typeof target.closest !== 'function') return;
+    if (!window.__vtfPanelDelegationBound) {
+        window.__vtfPanelDelegationBound = true;
 
-        const opener = target.closest('[data-panel]');
-        if (opener && (opener.id === 'parts' || opener.id === 'inspector')) {
-            const id = opener.getAttribute('data-panel');
-            const panel = byId(id);
-            setPanel(id, panel ? !panel.classList.contains('mobile-open') : true);
-            return;
-        }
+        document.addEventListener('click', function (e) {
+            const target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
 
-        const closer = target.closest('.btn-close-panel');
-        if (closer) {
-            setPanel(closer.getAttribute('data-panel'), false);
-            return;
-        }
+            const closer = target.closest('.btn-close-panel');
+            if (closer) {
+                e.preventDefault();
+                const panelId = closer.getAttribute('data-panel');
+                if (panelId === 'left' || panelId === 'right') {
+                    setPanel(panelId, false);
+                }
+                return;
+            }
 
-        if (target.id === 'panelBackdrop') {
-            setPanel('left', false);
-            setPanel('right', false);
-        }
-    });
+            if (target.id === 'panelBackdrop') {
+                e.preventDefault();
+                setPanel('left', false);
+                setPanel('right', false);
+                return;
+            }
+
+            const opener = target.closest('#parts, #inspector, [data-panel]');
+            if (opener) {
+                const resolvedId = resolvePanelId(opener);
+                if (resolvedId) {
+                    e.preventDefault();
+                    togglePanel(resolvedId);
+                }
+            }
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                setPanel('left', false);
+                setPanel('right', false);
+            }
+        });
+    }
 
     const loadSceneBtn = byId('loadSceneBtn');
     const jsonFileInp = byId('jsonFile');
