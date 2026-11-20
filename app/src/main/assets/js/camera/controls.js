@@ -5,13 +5,20 @@
 'use strict';
 
 function $(id) { return document.getElementById(id); }
-function getApp() { return (typeof window.app !== 'undefined' && window.app) ? window.app : null; }
+
+function getApp() {
+    if (typeof window.getPcApp === 'function') {
+        const pcApp = window.getPcApp();
+        if (pcApp) return pcApp;
+    }
+    return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
+}
+
 function log(msg) {
     if (typeof window.dbg === 'function') { try { window.dbg(msg); } catch (e) {} }
     else if (typeof console !== 'undefined') { console.log(msg); }
 }
 
-// ---------- PANEL (fallback, kalau app.html tanpa __vtfSetPanel) ----------
 function setPanelFallback(id, open) {
     if (typeof window.__vtfSetPanel === 'function') {
         window.__vtfSetPanel(id, open);
@@ -62,7 +69,6 @@ function setupPanels() {
     });
 }
 
-// ---------- KAMERA ----------
 var CameraControls = {
     camera: null,
     pivot: null,
@@ -93,6 +99,7 @@ var CameraControls = {
 
     init: function (app) {
         if (!app) return false;
+        if (this.camera && this.app === app) return true;
         this.app = app;
 
         var cam = null;
@@ -253,13 +260,10 @@ var CameraControls = {
         this.apply();
     },
     _resize: function () {
-        var app = this.app;
+        var app = this.app || getApp();
         if (!app || !app.graphicsDevice) return;
         try {
-            var canvas = this.canvas;
-            var w = canvas ? canvas.clientWidth : window.innerWidth;
-            var h = canvas ? canvas.clientHeight : window.innerHeight;
-            if (w > 0 && h > 0 && typeof app.resizeCanvas === 'function') app.resizeCanvas(w, h);
+            if (typeof app.resizeCanvas === 'function') app.resizeCanvas();
         } catch (e) {}
     },
 
