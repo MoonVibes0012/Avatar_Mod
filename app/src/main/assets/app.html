@@ -6,55 +6,6 @@
     <meta name="theme-color" content="#08080b">
     <title>VTuber Forge</title>
     <link id="mainStylesheet" rel="stylesheet" href="css/style.css">
-    <style>
-        @font-face {
-            font-family: "Optimistic";
-            font-style: normal;
-            font-weight: 400 600;
-            font-display: swap;
-            src: url("fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
-        }
-        @font-face {
-            font-family: "Optimistic Mono";
-            font-style: normal;
-            font-weight: 400;
-            font-display: swap;
-            src: url("fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
-        }
-        :where(html) {
-            font-family: "Optimistic", system-ui, sans-serif;
-        }
-        :where(code, pre, kbd, samp) {
-            font-family: "Optimistic Mono", ui-monospace, monospace;
-        }
-        html, body {
-            margin: 0;
-            height: 100%;
-            background: #08080b;
-            color: #eee;
-            overflow: hidden;
-        }
-        .app {
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }
-        .work {
-            flex: 1;
-            min-height: 0;
-            position: relative;
-            overflow: hidden;
-        }
-        .viewport {
-            position: absolute;
-            inset: 0;
-        }
-        canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-    </style>
     <script>
     (function () {
         var styleCandidates = ['css/style.css', './css/style.css', 'file:///android_asset/css/style.css', 'style.css'];
@@ -142,7 +93,7 @@
         <div class="spinner"></div>
         <div id="loadingText">Memproses Model...</div>
     </div>
-    <noscript><div style="position:fixed;inset:0;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;z-index:999999;">VTuber Forge butuh JavaScript.</div></noscript>
+    <noscript><div class="noscript-banner">VTuber Forge butuh JavaScript.</div></noscript>
 
     <!-- OFFLINE SCRIPTS -->
     <script src="js/playcanvas.min.js"></script>
