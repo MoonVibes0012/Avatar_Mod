@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
-/* FULL REPLACE — Kamera orbit + panel buka/tutup dengan sinkronisasi pivot/camera. */
+/* FULL REPLACE — Kamera orbit + delegasi ke helper panel tunggal agar tidak double-toggle. */
 
 (function () {
 'use strict';
@@ -19,52 +19,54 @@ function log(msg) {
     else if (typeof console !== 'undefined') { console.log(msg); }
 }
 
-function setPanelFallback(id, open) {
-    if (typeof window.__vtfSetPanel === 'function') {
-        window.__vtfSetPanel(id, open);
-        return;
-    }
-    var panel = $(id);
-    if (!panel) return;
-    panel.classList.toggle('mobile-open', !!open);
-    panel.setAttribute('aria-hidden', open ? 'false' : 'true');
-    var backdrop = $('panelBackdrop');
-    if (backdrop) {
-        var anyOpen = !!document.querySelector('.panel.mobile-open');
-        backdrop.hidden = !anyOpen;
-    }
-    var btn = (id === 'left') ? $('parts') : $('inspector');
-    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-}
-
 function setupPanels() {
+    if (window.__vtfPanelDelegationBound) return;
     if (window.__vtfPanelsBound) return;
     window.__vtfPanelsBound = true;
+
+    function setPanelLocal(id, open) {
+        if (typeof window.__vtfSetPanel === 'function') {
+            window.__vtfSetPanel(id, open);
+            return;
+        }
+        var panel = $(id);
+        if (!panel) return;
+        panel.classList.toggle('mobile-open', !!open);
+        panel.style.removeProperty('display');
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        var backdrop = $('panelBackdrop');
+        if (backdrop) {
+            var anyOpen = !!document.querySelector('.panel.mobile-open');
+            backdrop.hidden = !anyOpen;
+        }
+        var btn = (id === 'left') ? $('parts') : $('inspector');
+        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
 
     var parts = $('parts');
     if (parts) parts.addEventListener('click', function () {
         var p = $('left');
-        setPanelFallback('left', p ? !p.classList.contains('mobile-open') : true);
+        setPanelLocal('left', p ? !p.classList.contains('mobile-open') : true);
     });
     var inspector = $('inspector');
     if (inspector) inspector.addEventListener('click', function () {
         var p = $('right');
-        setPanelFallback('right', p ? !p.classList.contains('mobile-open') : true);
+        setPanelLocal('right', p ? !p.classList.contains('mobile-open') : true);
     });
     document.querySelectorAll('.btn-close-panel').forEach(function (btn) {
         btn.addEventListener('click', function () {
-            setPanelFallback(btn.getAttribute('data-panel'), false);
+            setPanelLocal(btn.getAttribute('data-panel'), false);
         });
     });
     var backdrop = $('panelBackdrop');
     if (backdrop) backdrop.addEventListener('click', function () {
-        setPanelFallback('left', false);
-        setPanelFallback('right', false);
+        setPanelLocal('left', false);
+        setPanelLocal('right', false);
     });
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
-            setPanelFallback('left', false);
-            setPanelFallback('right', false);
+            setPanelLocal('left', false);
+            setPanelLocal('right', false);
         }
     });
 }
