@@ -34,7 +34,9 @@
         e.addComponent('render', { type: 'box', castShadows: false });
 
         const m = new pc.StandardMaterial();
-        m.diffuse = new pc.Color(0.6, 0.2, 0.8);
+        m.diffuse = new pc.Color(0.68, 0.32, 0.92);
+        m.metalness = 0.0;
+        m.gloss = 0.45;
         if (typeof m.update === 'function') m.update();
         e.render.material = m;
 
