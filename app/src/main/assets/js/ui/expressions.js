@@ -1,208 +1,216 @@
 /* ===== VTuber Forge — js/ui/expressions.js ===== */
-// Expression Presets dan Custom Expressions
+// Blendshape / Facial Expressions Preset & Custom Expressions
 
-const EXPRESSION_PRESETS = {
-    neutral: {},
-    smile: { smile: 0.8, mouth_smile: 0.8, joy: 0.6, mouth_up: 0.7, aa: 0.2, blush: 0.3 },
-    laugh: { smile: 1.0, mouth_smile: 1.0, mouth_open: 0.6, aa: 0.7, joy: 0.9, eye_squint: 0.5 },
-    surprise: { eye_wide: 0.9, eye_open_wide: 0.9, mouth_open: 0.8, oo: 0.7, brow_up: 0.8, surprise: 0.9 },
-    angry: { brow_angry: 0.9, brow_down: 0.8, angry: 0.9, mouth_angry: 0.6, eye_sharp: 0.5 },
-    sad: { brow_sad: 0.8, brow_down: 0.6, sad: 0.9, mouth_sad: 0.7, eye_cry: 0.4 },
-    wink_l: { eye_blink_l: 1.0, eye_close_l: 1.0, blink_l: 1.0, smile: 0.3 },
-    wink_r: { eye_blink_r: 1.0, eye_close_r: 1.0, blink_r: 1.0, smile: 0.3 },
-    shock: { eye_wide: 1.0, mouth_open: 1.0, oo: 0.9, brow_up: 1.0, shock: 1.0, surprise: 1.0 },
-    happy: { smile: 1.0, mouth_smile: 1.0, joy: 1.0, eye_squint: 0.6, blush: 0.5, happy: 1.0 },
-    cool: { eye_half: 0.7, smile: 0.4, mouth_smile: 0.3, cool: 0.8 },
-    love: { eye_heart: 0.9, heart_eye: 0.9, smile: 0.8, blush: 0.7, love: 1.0 }
-};
+(function () {
+    'use strict';
 
-let customExpressions = {};
-try {
-    customExpressions = JSON.parse(localStorage.getItem('vtuber_custom_expr') || '{}') || {};
-} catch (e) {
-    customExpressions = {};
-}
+    const EXPRESSION_PRESETS = {
+        neutral: { label: '😐 Neutral', keywords: [] },
+        happy:   { label: '😊 Happy',   keywords: ['joy', 'happy', 'smile', 'fun'] },
+        angry:   { label: '😠 Angry',   keywords: ['angry', 'anger', 'frown'] },
+        sad:     { label: '😢 Sad',     keywords: ['sad', 'sorrow'] },
+        surprised:{ label: '😮 Surprised', keywords: ['surprised', 'surprise', 'oh', 'o'] },
+        blink:   { label: '😉 Blink',   keywords: ['blink', 'blink_l', 'blink_r', 'eye_close'] }
+    };
 
-function setExprStatus(msg) {
-    const el = document.getElementById('status');
-    if (el) el.textContent = msg;
-}
+    let customExpressions = {};
+    let activePresetKey = null;
 
-function logExpr(msg) {
-    if (typeof window.dbg === 'function') {
-        try { window.dbg(msg); } catch (e) {}
-    } else if (typeof console !== 'undefined') {
-        console.log(msg);
-    }
-}
-
-function findExprMorphIndex(name) {
-    if (!S.selected || !Array.isArray(S.selected._morphNames)) return -1;
-    const lowerName = String(name || '').toLowerCase();
-    let idx = S.selected._morphNames.findIndex(n => String(n || '').toLowerCase() === lowerName);
-    if (idx >= 0) return idx;
-
-    idx = S.selected._morphNames.findIndex(n => String(n || '').toLowerCase().includes(lowerName));
-    if (idx >= 0) return idx;
-
-    const normalized = lowerName.replace(/[\s_-]/g, '');
-    idx = S.selected._morphNames.findIndex(n =>
-        String(n || '').toLowerCase().replace(/[\s_-]/g, '').includes(normalized)
-    );
-    return idx;
-}
-
-function applyExpression(exprName, intensity) {
-    if (intensity === undefined || isNaN(Number(intensity))) intensity = 1.0;
-    else intensity = Number(intensity);
-
-    if (!S.selected || !S.selected._morphInstance || !Array.isArray(S.selected._morphNames)) {
-        alert("Objek ini tidak memiliki blendshapes (morph targets).");
-        return;
+    function byId(id) {
+        return document.getElementById(id);
     }
 
-    let preset = EXPRESSION_PRESETS[exprName];
-    if (!preset) {
-        preset = customExpressions[exprName];
-        if (!preset) {
-            logExpr("Expression not found: " + exprName);
+    function setExprStatus(msg) {
+        const el = byId('status');
+        if (el) el.textContent = msg;
+    }
+
+    function logExpr(msg) {
+        if (typeof window.dbg === 'function') {
+            try { window.dbg(msg); } catch (e) {}
+        } else if (typeof console !== 'undefined') {
+            console.log(msg);
+        }
+    }
+
+    function getSelectedModel() {
+        if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
+        try {
+            if (typeof S !== 'undefined' && S && S.selected) return S.selected;
+        } catch (e) {}
+        return null;
+    }
+
+    function updateExprButtonState(presetKey) {
+        activePresetKey = presetKey || null;
+        document.querySelectorAll('.expr-btn[data-expr]').forEach(btn => {
+            const key = btn.getAttribute('data-expr');
+            btn.classList.toggle('active', !!activePresetKey && key === activePresetKey);
+        });
+    }
+    window.updateExprButtonState = updateExprButtonState;
+
+    function syncMorphSliderUI(idx, weight) {
+        const clamped = Math.max(0, Math.min(1, Number(weight) || 0));
+        const slider = document.querySelector('#morphControls input[data-morph-idx="' + idx + '"]');
+        if (slider) slider.value = clamped.toFixed(2);
+        const label = byId('morphVal_' + idx);
+        if (label) label.textContent = clamped.toFixed(2);
+    }
+
+    function resetAllMorphWeights(entity) {
+        if (!entity || !entity._morphInstance || !Array.isArray(entity._morphNames)) return;
+        entity._morphNames.forEach((_, idx) => {
+            try {
+                if (typeof entity._morphInstance.setWeight === 'function') {
+                    entity._morphInstance.setWeight(idx, 0);
+                }
+                syncMorphSliderUI(idx, 0);
+            } catch (e) {}
+        });
+    }
+
+    function applyExpressionPreset(presetKey) {
+        const selected = getSelectedModel();
+        if (!selected) {
+            alert("Pilih model dulu sebelum menerapkan ekspresi!");
             return;
         }
-    }
-
-    if (exprName === 'neutral') {
-        for (let i = 0; i < S.selected._morphNames.length; i++) {
-            S.selected._morphInstance.setWeight(i, 0);
+        if (!selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
+            alert("Model ini tidak memiliki blendshape / morph targets.");
+            return;
         }
-        const sliders = document.querySelectorAll('#morphControls input[type=range]');
-        sliders.forEach(s => {
-            s.value = '0';
-            const label = document.getElementById('morphVal_' + s.dataset.morphIdx);
-            if (label) label.textContent = '0.00';
-        });
-        setExprStatus("😌 Neutral — semua blendshape di-reset");
-        updateExprButtonState(null);
-        return;
-    }
 
-    let appliedCount = 0;
-    const notFoundKeys = [];
-    for (const key in preset) {
-        const clampedVal = Math.max(0, Math.min(1, preset[key] * intensity));
-        const idx = findExprMorphIndex(key);
-        if (idx >= 0) {
-            S.selected._morphInstance.setWeight(idx, clampedVal);
-            appliedCount++;
-            const slider = document.querySelector('#morphControls input[data-morph-idx="' + idx + '"]');
-            if (slider) {
-                slider.value = clampedVal.toFixed(2);
-                const label = document.getElementById('morphVal_' + idx);
-                if (label) label.textContent = clampedVal.toFixed(2);
-            }
-        } else {
-            notFoundKeys.push(key);
+        const preset = EXPRESSION_PRESETS[presetKey];
+        if (!preset) return;
+
+        resetAllMorphWeights(selected);
+
+        if (presetKey === 'neutral' || !Array.isArray(preset.keywords) || preset.keywords.length === 0) {
+            updateExprButtonState('neutral');
+            setExprStatus("Ekspresi: Neutral");
+            return;
         }
-    }
 
-    if (notFoundKeys.length > 0) {
-        logExpr("Expression '" + exprName + "' — tidak ditemukan: " + notFoundKeys.join(', '));
-    }
-    setExprStatus("✓ " + exprName + " applied (" + appliedCount + " blendshapes)");
-    updateExprButtonState(exprName);
-    if (typeof saveState === 'function') saveState();
-}
-window.applyExpression = applyExpression;
-
-function updateExprButtonState(activeExpr) {
-    document.querySelectorAll('.expr-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.expr === activeExpr);
-    });
-}
-window.updateExprButtonState = updateExprButtonState;
-
-function renderCustomExprList() {
-    const container = document.getElementById('customExprList');
-    if (!container) return;
-    container.innerHTML = '';
-    const keys = Object.keys(customExpressions);
-    if (keys.length === 0) return;
-    keys.forEach(name => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = '⭐ ' + name;
-        btn.onclick = () => {
-            const intEl = document.getElementById('exprIntensity');
-            const intensity = intEl ? (parseFloat(intEl.value) || 1) : 1;
-            applyExpression(name, intensity);
-        };
-        btn.oncontextmenu = (e) => {
-            e.preventDefault();
-            if (confirm("Hapus custom expression '" + name + "'?")) {
-                delete customExpressions[name];
+        let matchedCount = 0;
+        selected._morphNames.forEach((rawName, idx) => {
+            const lower = String(rawName || '').toLowerCase();
+            const isMatch = preset.keywords.some(kw => lower.includes(kw));
+            if (isMatch) {
+                matchedCount++;
                 try {
-                    localStorage.setItem('vtuber_custom_expr', JSON.stringify(customExpressions));
-                } catch (storageErr) {}
-                renderCustomExprList();
-                setExprStatus("Custom expression dihapus");
-            }
-        };
-        container.appendChild(btn);
-    });
-}
-window.renderCustomExprList = renderCustomExprList;
-
-document.querySelectorAll('.expr-btn').forEach(btn => {
-    btn.onclick = () => {
-        const intEl = document.getElementById('exprIntensity');
-        const intensity = intEl ? (parseFloat(intEl.value) || 1) : 1;
-        applyExpression(btn.dataset.expr, intensity);
-    };
-});
-
-const exprIntensityEl = document.getElementById('exprIntensity');
-if (exprIntensityEl) {
-    exprIntensityEl.oninput = (e) => {
-        const out = document.getElementById('exprIntensityOut');
-        const parsed = parseFloat(e.target.value);
-        if (out) out.textContent = (isNaN(parsed) ? 1 : parsed).toFixed(2);
-    };
-}
-
-const exprSaveCustomEl = document.getElementById('exprSaveCustom');
-if (exprSaveCustomEl) {
-    exprSaveCustomEl.onclick = () => {
-        if (!S.selected || !S.selected._morphInstance || !Array.isArray(S.selected._morphNames)) {
-            return alert("Pilih objek dengan blendshapes dulu!");
-        }
-        const name = prompt("Nama expression custom:");
-        if (!name || name.trim() === '') return;
-
-        const safeName = name.trim().replace(/[^a-zA-Z0-9_ -]/g, '');
-        if (safeName === '') return alert("Nama tidak valid!");
-
-        const preset = {};
-        S.selected._morphNames.forEach((morphName, idx) => {
-            const weight = typeof S.selected._morphInstance.getWeight === 'function'
-                ? Number(S.selected._morphInstance.getWeight(idx) || 0)
-                : 0;
-            if (weight > 0.01) {
-                const key = String(morphName || `morph_${idx}`).toLowerCase().replace(/[\s_-]/g, '_');
-                preset[key] = weight;
+                    if (typeof selected._morphInstance.setWeight === 'function') {
+                        selected._morphInstance.setWeight(idx, 1.0);
+                    }
+                    syncMorphSliderUI(idx, 1.0);
+                } catch (e) {}
             }
         });
 
-        if (Object.keys(preset).length === 0) {
-            return alert("Tidak ada blendshape aktif untuk disimpan!");
+        updateExprButtonState(presetKey);
+        if (matchedCount > 0) {
+            setExprStatus("Ekspresi " + preset.label + " diterapkan (" + matchedCount + " morph)");
+        } else {
+            setExprStatus("Morph untuk '" + presetKey + "' tidak ditemukan pada model ini.");
+        }
+    }
+
+    function renderCustomExpressions() {
+        const listEl = byId('customExprList');
+        if (!listEl) return;
+
+        const keys = Object.keys(customExpressions);
+        if (keys.length === 0) {
+            listEl.innerHTML = '';
+            return;
         }
 
-        customExpressions[safeName] = preset;
-        try {
-            localStorage.setItem('vtuber_custom_expr', JSON.stringify(customExpressions));
-        } catch (storageErr) {}
-        renderCustomExprList();
-        setExprStatus("💾 Custom expression '" + safeName + "' tersimpan (long-press untuk hapus)");
-    };
-}
+        const safeEscape = (typeof window.escapeHtml === 'function')
+            ? window.escapeHtml
+            : (s => String(s || '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c])));
 
-renderCustomExprList();
-logExpr("✅ expressions.js loaded");
+        listEl.innerHTML = keys.map(name =>
+            `<button type="button" data-custom-expr="${safeEscape(name)}">★ ${safeEscape(name)}</button>`
+        ).join('');
+
+        listEl.querySelectorAll('button[data-custom-expr]').forEach(btn => {
+            btn.onclick = () => {
+                const name = btn.getAttribute('data-custom-expr');
+                const weights = customExpressions[name];
+                const selected = getSelectedModel();
+                if (!selected || !selected._morphInstance || !Array.isArray(weights)) return;
+
+                resetAllMorphWeights(selected);
+                weights.forEach((w, idx) => {
+                    const num = Math.max(0, Math.min(1, Number(w) || 0));
+                    try {
+                        if (typeof selected._morphInstance.setWeight === 'function') {
+                            selected._morphInstance.setWeight(idx, num);
+                        }
+                        syncMorphSliderUI(idx, num);
+                    } catch (e) {}
+                });
+                updateExprButtonState(null);
+                setExprStatus("Ekspresi custom diterapkan: " + name);
+            };
+        });
+    }
+
+    function saveCustomExpression() {
+        const selected = getSelectedModel();
+        if (!selected || !selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
+            alert("Pilih model yang memiliki morph targets dulu!");
+            return;
+        }
+
+        const nameInput = byId('customExprName');
+        const rawName = nameInput ? nameInput.value.trim() : '';
+        if (!rawName) {
+            alert("Masukkan nama ekspresi kustom terlebih dahulu.");
+            return;
+        }
+
+        const weights = selected._morphNames.map((_, idx) => {
+            try {
+                if (typeof selected._morphInstance.getWeight === 'function') {
+                    const val = Number(selected._morphInstance.getWeight(idx));
+                    return isFinite(val) ? Math.max(0, Math.min(1, val)) : 0;
+                }
+            } catch (e) {}
+            return 0;
+        });
+
+        customExpressions[rawName] = weights;
+        if (nameInput) nameInput.value = '';
+        renderCustomExpressions();
+        setExprStatus("✓ Ekspresi kustom disimpan: " + rawName);
+        logExpr("Saved custom expression: " + rawName);
+    }
+
+    document.querySelectorAll('.expr-btn[data-expr]').forEach(btn => {
+        btn.onclick = () => {
+            const key = btn.getAttribute('data-expr');
+            applyExpressionPreset(key);
+        };
+    });
+
+    const resetExprBtn = byId('resetExprBtn');
+    if (resetExprBtn) {
+        resetExprBtn.onclick = () => {
+            const selected = getSelectedModel();
+            if (!selected) return alert("Pilih model dulu!");
+            resetAllMorphWeights(selected);
+            updateExprButtonState(null);
+            setExprStatus("Semua ekspresi / morph di-reset.");
+        };
+    }
+
+    const saveCustomBtn = byId('saveCustomExprBtn');
+    if (saveCustomBtn) {
+        saveCustomBtn.onclick = saveCustomExpression;
+    }
+
+    logExpr("✅ expressions.js loaded");
+})();
