@@ -1,136 +1,123 @@
-<!DOCTYPE html>
-<html lang="id">
+<!doctype html>
+<html lang="id" dir="ltr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08080b">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
     <title>VTuber Forge</title>
-    <link id="mainStylesheet" rel="stylesheet" href="css/style.css">
-    <script>
-    (function () {
-        var styleCandidates = ['css/style.css', './css/style.css', 'file:///android_asset/css/style.css', 'style.css'];
-        var candidateIdx = 0;
-
-        function tryNextStyle() {
-            var link = document.getElementById('mainStylesheet');
-            if (!link) return;
-            candidateIdx++;
-            if (candidateIdx >= styleCandidates.length) {
-                window.__vtfStyleFailed = true;
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('[VTuber Forge] Gagal memuat css/style.css dari semua path.');
-                }
-                return;
-            }
-            var nextHref = styleCandidates[candidateIdx];
-            var fallbackLink = document.createElement('link');
-            fallbackLink.rel = 'stylesheet';
-            fallbackLink.href = nextHref;
-            fallbackLink.onload = function () {
-                window.__vtfStyleFailed = false;
-                window.__vtfLoadedStyleHref = nextHref;
-            };
-            fallbackLink.onerror = tryNextStyle;
-            document.head.appendChild(fallbackLink);
-        }
-
-        window.addEventListener('DOMContentLoaded', function () {
-            var link = document.getElementById('mainStylesheet');
-            if (!link) return;
-            link.addEventListener('error', tryNextStyle);
-            link.addEventListener('load', function () {
-                window.__vtfStyleFailed = false;
-                window.__vtfLoadedStyleHref = link.getAttribute('href');
-            });
-        });
-    })();
-    </script>
+    <link rel="stylesheet" href="css/style.css" onerror="window.__vtfStyleFailed=true">
+    <script src="js/playcanvas.min.js" onerror="window.__vtfPcFailed=true"></script>
+    <script src="js/face_mesh.js" onerror="window.__vtfFmFailed=true"></script>
+    <script src="js/kalidokit.umd.js" onerror="window.__vtfKkFailed=true"></script>
 </head>
 <body>
-    <div class="app">
-        <!-- TOP BAR -->
-        <div class="top">
-            <span class="brand">VTuber Forge <span class="badge">v0.1</span></span>
-            <button type="button" id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
-            <button type="button" id="btnRedo" title="Redo (Ctrl+Y)">↷</button>
-            <button type="button" id="btnSave" title="Save Scene JSON">💾</button>
-            <button type="button" id="btnImport" title="Import GLB/VRM">📥</button>
-            <button type="button" id="btnScreenshot" title="Screenshot">📸</button>
-            <button type="button" id="parts" title="Menu Objek & Primitives" data-panel="left" aria-expanded="false">☰ Menu</button>
-            <button type="button" id="inspector" title="Inspector & Transform" data-panel="right" aria-expanded="false">⚙️ Inspect</button>
-            <button type="button" id="btnCharDriver" title="Character Driver — animasi procedural">🎭</button>
-            <button type="button" id="btnFaceTrack" title="Face Tracking — kamera depan">📷</button>
-            <button type="button" id="btnDebug" title="Toggle Debug Log">🐛</button>
-        </div>
 
-        <!-- WORK AREA -->
-        <div class="work">
-            <div class="viewport">
-                <canvas id="gl"></canvas>
-                <div class="hud">
-                    <span id="mode">OBJECT</span>
-                    <span id="sel">Nothing selected</span>
-                </div>
+<noscript>
+    <div class="noscript-banner">
+        JavaScript wajib aktif untuk VTuber Forge.
+    </div>
+</noscript>
+
+<div id="loadingOverlay" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <div id="loadingText">Memproses Model...</div>
+</div>
+
+<div class="app">
+    <div class="top">
+        <div class="brand">VTuber Forge</div>
+        <span class="badge">v0.1</span>
+        <button type="button" id="parts" class="top-btn" data-panel="left" aria-expanded="false" aria-controls="left" aria-label="Menu">☰</button>
+        <button type="button" id="inspector" class="top-btn" data-panel="right" aria-expanded="false" aria-controls="right" aria-label="Inspect">⚙</button>
+        <button type="button" id="btnUndo" title="Undo (Z)" aria-label="Undo">↶</button>
+        <button type="button" id="btnRedo" title="Redo (Y)" aria-label="Redo">↷</button>
+        <button type="button" id="btnSave" title="Save Scene" aria-label="Save Scene">💾</button>
+        <button type="button" id="btnImport" title="Import GLB/VRM" aria-label="Import Model">📥</button>
+        <button type="button" id="btnScreenshot" title="Screenshot" aria-label="Screenshot">📸</button>
+        <button type="button" id="btnFaceTrack" title="Face Tracking" aria-label="Face Tracking">📷</button>
+        <button type="button" id="btnCharDriver" title="Character Driver" aria-label="Character Driver">🎭</button>
+        <button type="button" id="btnDebug" title="Toggle Debug Log" aria-label="Debug Log">🐛</button>
+    </div>
+
+    <div class="work">
+        <button type="button" id="panelBackdrop" hidden aria-label="Tutup panel"></button>
+
+        <div class="panel" id="left" role="dialog" aria-label="Menu">
+            <div class="panel-header">
+                <h3>☰ MENU</h3>
+                <button type="button" class="btn-close-panel" data-panel="left" aria-label="Tutup menu">✕ Tutup</button>
             </div>
-            <div id="panelBackdrop" hidden></div>
-            <div id="panelHost"></div>
+            <div id="leftBody"></div>
         </div>
 
-        <!-- STATUS BAR -->
-        <div class="status">
-            <span id="status">Ready.</span>
-            <span style="margin-left:auto;">
-                <button type="button" id="saveLogBtn" style="font-size:10px; padding:2px 6px;">Save Log</button>
-            </span>
+        <div class="viewport">
+            <canvas id="gl"></canvas>
+            <div class="hud">
+                <span id="sel">Nothing selected</span>
+                <span id="mode">OBJECT</span>
+            </div>
+        </div>
+
+        <div class="panel" id="right" role="dialog" aria-label="Inspect">
+            <div class="panel-header">
+                <h3>⚙ INSPECT</h3>
+                <button type="button" class="btn-close-panel" data-panel="right" aria-label="Tutup inspect">✕ Tutup</button>
+            </div>
+            <div id="rightBody"></div>
         </div>
     </div>
 
-    <!-- HIDDEN FILE INPUTS & OVERLAYS -->
-    <input type="file" id="file" accept=".glb,.vrm,.gltf" style="display:none;">
-    <input type="file" id="jsonFile" accept=".json" style="display:none;">
-    <div id="debugOverlay" role="log" aria-live="polite"></div>
-    <div id="loadingOverlay" aria-live="polite">
-        <div class="spinner"></div>
-        <div id="loadingText">Memproses Model...</div>
+    <div class="status">
+        <span id="status">Viewport aktif. Import GLB/VRM atau tambah object.</span>
+        <span class="status-actions">
+            <button type="button" id="saveLogBtn" class="save-log-btn">Save Log</button>
+        </span>
     </div>
-    <noscript><div class="noscript-banner">VTuber Forge butuh JavaScript.</div></noscript>
 
-    <!-- OFFLINE SCRIPTS -->
-    <script src="js/playcanvas.min.js"></script>
-    <script src="js/face_mesh.js"></script>
-    <script src="js/kalidokit.umd.js"></script>
-    <script src="js/ui/panels_template.js"></script>
-    <script src="js/ui/boot.js"></script>
+    <input id="file" class="hidden-file-input" type="file" accept=".glb,.vrm,.gltf,application/octet-stream,model/gltf-binary,model/gltf+json,*/*" />
+    <input id="jsonFile" class="hidden-file-input" type="file" accept=".json,application/json,text/plain,*/*" />
+</div>
 
-    <!-- Core -->
-    <script src="js/core/config.js"></script>
-    <script src="js/core/debug.js"></script>
-    <script src="js/core/init.js"></script>
+<div id="debugOverlay"></div>
 
-    <!-- Camera -->
-    <script src="js/camera/controls.js"></script>
+<!-- Core -->
+<script src="js/core/config.js"></script>
+<script src="js/core/debug.js"></script>
+<script src="js/core/init.js"></script>
 
-    <!-- Entities -->
-    <script src="js/entities/create.js"></script>
-    <script src="js/entities/select.js"></script>
-    <script src="js/entities/operations.js"></script>
-    <script src="js/entities/split.js"></script>
+<!-- Panels template (harus di-load sebelum UI & entities) -->
+<script src="js/ui/panels_template.js"></script>
 
-    <!-- Editing -->
-    <script src="js/editing/vertex.js"></script>
-    <script src="js/editing/bone.js"></script>
-    <script src="js/editing/smooth.js"></script>
+<!-- Camera -->
+<script src="js/camera/controls.js"></script>
 
-    <!-- IO -->
-    <script src="js/io/import.js"></script>
-    <script src="js/io/export.js"></script>
-    <script src="js/io/save_load.js"></script>
-    <script src="js/scene/serialize.js"></script>
+<!-- Entities -->
+<script src="js/entities/create.js"></script>
+<script src="js/entities/select.js"></script>
+<script src="js/entities/operations.js"></script>
+<script src="js/entities/split.js"></script>
 
-    <!-- Tracking & Animation UI -->
-    <script src="js/tracking/face.js"></script>
-    <script src="js/ui/toolbar.js"></script>
-    <script src="js/ui/expressions.js"></script>
-    <script src="js/animation/character_driver.js"></script>
+<!-- Editing -->
+<script src="js/editing/vertex.js"></script>
+<script src="js/editing/smooth.js"></script>
+<script src="js/editing/bone.js"></script>
+
+<!-- Animation -->
+<script src="js/animation/character_driver.js"></script>
+
+<!-- Scene & I/O -->
+<script src="js/scene/serialize.js"></script>
+<script src="js/io/import.js"></script>
+<script src="js/io/export.js"></script>
+<script src="js/io/save_load.js"></script>
+
+<!-- Face Tracking -->
+<script src="js/tracking/face.js"></script>
+
+<!-- UI -->
+<script src="js/ui/expressions.js"></script>
+<script src="js/ui/transform_inputs.js"></script>
+<script src="js/ui/toolbar.js"></script>
+<script src="js/ui/boot.js"></script>
+
 </body>
 </html>
