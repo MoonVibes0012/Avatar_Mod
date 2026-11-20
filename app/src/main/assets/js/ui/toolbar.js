@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/ui/toolbar.js ===== */
-// Toolbar shortcuts, Input handlers, Panel controls, Animation UI
+// Toolbar shortcuts, Input handlers, Panel helper sync, Animation UI
 
 (function () {
     'use strict';
@@ -378,7 +378,7 @@
         }
     });
 
-    // === PANEL CONTROLS ===
+    // === PANEL CONTROLS (delegasi tunggal via boot.js) ===
     function closeSidePanel(panelId) {
         if (typeof window.__vtfSetPanel === 'function') {
             window.__vtfSetPanel(panelId, false);
@@ -392,49 +392,24 @@
     window.closeSidePanel = closeSidePanel;
 
     function toggleSidePanel(panelId) {
+        if (typeof window.__vtfTogglePanel === 'function') {
+            window.__vtfTogglePanel(panelId);
+            return;
+        }
         const panel = document.getElementById(panelId);
         if (!panel) return;
         const isOpen = panel.classList.contains('mobile-open');
-        if (typeof window.__vtfSetPanel === 'function') {
-            const otherId = panelId === 'left' ? 'right' : 'left';
-            if (!isOpen) window.__vtfSetPanel(otherId, false);
-            window.__vtfSetPanel(panelId, !isOpen);
-            if (!isOpen) panel.scrollTop = 0;
-            return;
-        }
-        panel.style.removeProperty('display');
         const otherId = panelId === 'left' ? 'right' : 'left';
+        closeSidePanel(otherId);
         if (isOpen) {
             closeSidePanel(panelId);
         } else {
-            closeSidePanel(otherId);
+            panel.style.removeProperty('display');
             panel.classList.add('mobile-open');
             panel.scrollTop = 0;
         }
     }
-
-    function bindOnce(el, eventName, handler) {
-        if (!el) return;
-        const key = 'bound_' + eventName;
-        if (el.dataset[key] === '1') return;
-        el.dataset[key] = '1';
-        el.addEventListener(eventName, handler);
-    }
-
-    function initPanelControls() {
-        const partsBtn = document.getElementById('parts');
-        const inspectorBtn = document.getElementById('inspector');
-        bindOnce(partsBtn, 'click', (e) => { e.preventDefault(); e.stopPropagation(); toggleSidePanel('left'); });
-        bindOnce(inspectorBtn, 'click', (e) => { e.preventDefault(); e.stopPropagation(); toggleSidePanel('right'); });
-        document.querySelectorAll('.btn-close-panel').forEach(btn => {
-            bindOnce(btn, 'click', (e) => {
-                e.preventDefault(); e.stopPropagation();
-                const panelId = btn.getAttribute('data-panel');
-                if (panelId) closeSidePanel(panelId);
-            });
-        });
-    }
-    initPanelControls();
+    window.toggleSidePanel = toggleSidePanel;
 
     // === ANIMATION CLIP CONTROLS ===
     if (byId('animSelect')) {
