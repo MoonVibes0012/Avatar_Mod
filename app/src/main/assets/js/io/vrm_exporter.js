@@ -24,6 +24,48 @@
         return null;
     }
 
+    function getSelectedEntitySafe() {
+        if (typeof window.S !== 'undefined' && window.S) return window.S.selected || null;
+        try {
+            if (typeof S !== 'undefined' && S) return S.selected || null;
+        } catch (e) {}
+        return null;
+    }
+
+    function extractNodeTransform(entity) {
+        const nodeTransform = {};
+        if (!entity) return nodeTransform;
+
+        try {
+            if (typeof entity.getLocalPosition === 'function') {
+                const p = entity.getLocalPosition();
+                if (p && isFinite(p.x) && isFinite(p.y) && isFinite(p.z)) {
+                    nodeTransform.translation = [Number(p.x), Number(p.y), Number(p.z)];
+                }
+            }
+        } catch (e) {}
+
+        try {
+            if (typeof entity.getLocalRotation === 'function') {
+                const q = entity.getLocalRotation();
+                if (q && isFinite(q.x) && isFinite(q.y) && isFinite(q.z) && isFinite(q.w)) {
+                    nodeTransform.rotation = [Number(q.x), Number(q.y), Number(q.z), Number(q.w)];
+                }
+            }
+        } catch (e) {}
+
+        try {
+            if (typeof entity.getLocalScale === 'function') {
+                const s = entity.getLocalScale();
+                if (s && isFinite(s.x) && isFinite(s.y) && isFinite(s.z)) {
+                    nodeTransform.scale = [Number(s.x), Number(s.y), Number(s.z)];
+                }
+            }
+        } catch (e) {}
+
+        return nodeTransform;
+    }
+
     function buildVrmGlbBuffer(entity) {
         const renderComp = typeof entity.findComponent === 'function' ? entity.findComponent('render') : null;
         if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
@@ -103,10 +145,19 @@
             throw new Error("Tidak ada geometri mesh valid untuk di-export ke VRM.");
         }
 
-        const nodes = meshesGltf.map((_, i) => ({
-            name: (entity.name || 'Node') + '_' + i,
-            mesh: i
-        }));
+        const baseTransform = extractNodeTransform(entity);
+        const nodes = meshesGltf.map((_, i) => {
+            const nodeObj = {
+                name: (entity.name || 'Node') + '_' + i,
+                mesh: i
+            };
+            if (i === 0) {
+                if (baseTransform.translation) nodeObj.translation = baseTransform.translation;
+                if (baseTransform.rotation) nodeObj.rotation = baseTransform.rotation;
+                if (baseTransform.scale) nodeObj.scale = baseTransform.scale;
+            }
+            return nodeObj;
+        });
 
         const gltfJson = {
             asset: { version: '2.0', generator: 'VTuber Forge VRM Exporter' },
@@ -177,10 +228,11 @@
     function exportVRM() {
         const pcApp = getVrmExportApp();
         if (!pcApp || !pcApp.root) return alert("Scene belum siap.");
-        if (!S.selected) return alert("Pilih model dulu sebelum export VRM!");
+        const selected = getSelectedEntitySafe();
+        if (!selected) return alert("Pilih model dulu sebelum export VRM!");
         try {
-            const glbData = buildVrmGlbBuffer(S.selected);
-            const cleanName = (S.selected.name || 'avatar').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const glbData = buildVrmGlbBuffer(selected);
+            const cleanName = (selected.name || 'avatar').replace(/[^a-zA-Z0-9_-]/g, '_');
             if (typeof window.downloadBinary === 'function') {
                 window.downloadBinary(`${cleanName}.vrm`, glbData, 'model/gltf-binary');
             } else {
