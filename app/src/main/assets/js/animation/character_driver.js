@@ -38,15 +38,29 @@
     }
 
     function getDriverApp() {
+        if (typeof window.getPcApp === 'function') {
+            const pcApp = window.getPcApp();
+            if (pcApp) return pcApp;
+        }
         if (typeof window.app !== 'undefined' && window.app) return window.app;
-        if (typeof app !== 'undefined' && app) return app;
+        try {
+            if (typeof app !== 'undefined' && app) return app;
+        } catch (e) {}
         return null;
     }
 
     function getSelectedObj() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
-        if (typeof S !== 'undefined' && S && S.selected) return S.selected;
+        try {
+            if (typeof S !== 'undefined' && S && S.selected) return S.selected;
+        } catch (e) {}
         return null;
+    }
+
+    function setActiveDriverFlag(entity, active) {
+        if (entity && typeof entity === 'object') {
+            entity._driverActive = !!active;
+        }
     }
 
     function updateDriverButtonState() {
@@ -60,7 +74,9 @@
         const isOpen = panel.style.display === 'block';
         panel.style.display = isOpen ? 'none' : 'block';
         if (!isOpen) {
+            const selected = getSelectedObj();
             driverEnabled = true;
+            setActiveDriverFlag(selected, true);
             updateDriverButtonState();
             setDriverStatus("🎭 Character Driver aktif — atur animasi procedural");
         }
@@ -73,6 +89,7 @@
             return false;
         }
         driverEnabled = true;
+        setActiveDriverFlag(selected, true);
         updateDriverButtonState();
         const panel = byId('charDriverPanel');
         if (panel) panel.style.display = 'block';
@@ -82,12 +99,18 @@
     }
 
     function detachDriver() {
+        const currentSelected = getSelectedObj();
         driverEnabled = false;
         blinkEnabled = false;
         breathEnabled = false;
         swayEnabled = false;
         headBobEnabled = false;
         walkEnabled = false;
+
+        if (typeof window.S !== 'undefined' && window.S && Array.isArray(window.S.objects)) {
+            window.S.objects.forEach(o => setActiveDriverFlag(o, false));
+        }
+        setActiveDriverFlag(currentSelected, false);
 
         const cbBlink = byId('toggleBlink'); if (cbBlink) cbBlink.checked = false;
         const cbBreath = byId('toggleBreath'); if (cbBreath) cbBreath.checked = false;
@@ -156,9 +179,27 @@
         }) || null;
     }
 
+    function getBindRot(entity, boneIndex, fallbackEuler) {
+        if (entity && Array.isArray(entity._bindPose) && entity._bindPose[boneIndex]) {
+            const bp = entity._bindPose[boneIndex];
+            return {
+                x: Number(bp.x) || 0,
+                y: Number(bp.y) || 0,
+                z: Number(bp.z) || 0
+            };
+        }
+        return {
+            x: (fallbackEuler && Number(fallbackEuler.x)) || 0,
+            y: (fallbackEuler && Number(fallbackEuler.y)) || 0,
+            z: (fallbackEuler && Number(fallbackEuler.z)) || 0
+        };
+    }
+
     function updateProceduralAnimation(dt) {
         const selected = getSelectedObj();
         if (!selected) return;
+
+        setActiveDriverFlag(selected, true);
 
         const safeDt = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? Math.min(dt, 0.1) : 0.016;
         driverTime += safeDt;
@@ -187,7 +228,9 @@
                 const blinkIndices = findBlinkIndices(selected._morphNames);
                 blinkIndices.forEach(idx => {
                     try {
-                        selected._morphInstance.setWeight(idx, weight);
+                        if (typeof selected._morphInstance.setWeight === 'function') {
+                            selected._morphInstance.setWeight(idx, weight);
+                        }
                         const slider = document.querySelector('#morphControls input[data-morph-idx="' + idx + '"]');
                         if (slider) slider.value = weight.toFixed(2);
                         const label = byId('morphVal_' + idx);
@@ -230,9 +273,13 @@
         if (swayEnabled) {
             const swayVal = Math.sin(driverTime * 1.4) * swayAmount;
             if (bones) {
-                const spineBone = findBoneByKeywords(bones, ['spine', 'hips', 'pelvis']);
+                const spineIdx = Array.isArray(bones)
+                    ? bones.findIndex(b => ['spine', 'hips', 'pelvis'].some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)))
+                    : -1;
+                const spineBone = spineIdx >= 0 ? bones[spineIdx] : null;
                 if (spineBone && typeof spineBone.setLocalEulerAngles === 'function') {
-                    spineBone.setLocalEulerAngles(0, 0, swayVal);
+                    const baseR = getBindRot(selected, spineIdx, spineBone.getLocalEulerAngles ? spineBone.getLocalEulerAngles() : null);
+                    spineBone.setLocalEulerAngles(baseR.x, baseR.y, baseR.z + swayVal);
                 }
             } else if (selected._baseRot && typeof selected.setEulerAngles === 'function') {
                 selected.setEulerAngles(selected._baseRot.x, selected._baseRot.y, selected._baseRot.z + swayVal * 0.5);
@@ -241,11 +288,13 @@
 
         // 4. Head Bob
         if (headBobEnabled && bones) {
-            const headBone = findBoneByKeywords(bones, ['head', 'neck']);
+            const headIdx = bones.findIndex(b => ['head', 'neck'].some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)));
+            const headBone = headIdx >= 0 ? bones[headIdx] : null;
             if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
+                const baseR = getBindRot(selected, headIdx, headBone.getLocalEulerAngles ? headBone.getLocalEulerAngles() : null);
                 const bobX = Math.sin(driverTime * 2.5) * 4.0;
                 const bobY = Math.cos(driverTime * 1.7) * 3.0;
-                headBone.setLocalEulerAngles(bobX, bobY, 0);
+                headBone.setLocalEulerAngles(baseR.x + bobX, baseR.y + bobY, baseR.z);
             }
         }
 
@@ -253,15 +302,18 @@
         if (walkEnabled && bones) {
             const cycle = driverTime * walkSpeed * Math.PI * 2;
             const swing = Math.sin(cycle) * 28;
-            const leftLeg = findBoneByKeywords(bones, ['leftupleg', 'left_leg', 'leg_l', 'thigh_l']);
-            const rightLeg = findBoneByKeywords(bones, ['rightupleg', 'right_leg', 'leg_r', 'thigh_r']);
-            const leftArm = findBoneByKeywords(bones, ['leftupperarm', 'left_arm', 'arm_l', 'shoulder_l']);
-            const rightArm = findBoneByKeywords(bones, ['rightupperarm', 'right_arm', 'arm_r', 'shoulder_r']);
-
-            if (leftLeg && typeof leftLeg.setLocalEulerAngles === 'function') leftLeg.setLocalEulerAngles(swing, 0, 0);
-            if (rightLeg && typeof rightLeg.setLocalEulerAngles === 'function') rightLeg.setLocalEulerAngles(-swing, 0, 0);
-            if (leftArm && typeof leftArm.setLocalEulerAngles === 'function') leftArm.setLocalEulerAngles(-swing * 0.7, 0, 0);
-            if (rightArm && typeof rightArm.setLocalEulerAngles === 'function') rightArm.setLocalEulerAngles(swing * 0.7, 0, 0);
+            const applyLegOrArm = (keywords, sign) => {
+                const bIdx = bones.findIndex(b => keywords.some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)));
+                const b = bIdx >= 0 ? bones[bIdx] : null;
+                if (b && typeof b.setLocalEulerAngles === 'function') {
+                    const baseR = getBindRot(selected, bIdx, b.getLocalEulerAngles ? b.getLocalEulerAngles() : null);
+                    b.setLocalEulerAngles(baseR.x + swing * sign, baseR.y, baseR.z);
+                }
+            };
+            applyLegOrArm(['leftupleg', 'left_leg', 'leg_l', 'thigh_l'], 1);
+            applyLegOrArm(['rightupleg', 'right_leg', 'leg_r', 'thigh_r'], -1);
+            applyLegOrArm(['leftupperarm', 'left_arm', 'arm_l', 'shoulder_l'], -0.7);
+            applyLegOrArm(['rightupperarm', 'right_arm', 'arm_r', 'shoulder_r'], 0.7);
         }
     }
 
