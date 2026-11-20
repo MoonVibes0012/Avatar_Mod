@@ -25,7 +25,10 @@
     window.__vtfSetPanel = setPanel;
 
     document.addEventListener('click', function (e) {
-        const opener = e.target.closest ? e.target.closest('[data-panel]') : null;
+        const target = e.target;
+        if (!target || typeof target.closest !== 'function') return;
+
+        const opener = target.closest('[data-panel]');
         if (opener && (opener.id === 'parts' || opener.id === 'inspector')) {
             const id = opener.getAttribute('data-panel');
             const panel = byId(id);
@@ -33,13 +36,13 @@
             return;
         }
 
-        const closer = e.target.closest ? e.target.closest('.btn-close-panel') : null;
+        const closer = target.closest('.btn-close-panel');
         if (closer) {
             setPanel(closer.getAttribute('data-panel'), false);
             return;
         }
 
-        if (e.target && e.target.id === 'panelBackdrop') {
+        if (target.id === 'panelBackdrop') {
             setPanel('left', false);
             setPanel('right', false);
         }
@@ -100,11 +103,17 @@
     window.addEventListener('load', function () {
         const missing = [];
         if (typeof window.pc === 'undefined') missing.push('PlayCanvas (js/playcanvas.min.js)');
+        if (typeof window.FaceMesh === 'undefined') missing.push('MediaPipe FaceMesh (js/face_mesh.js)');
+        const hasKalidokit = (typeof window.Kalidokit !== 'undefined') || (typeof window.KalidoKit !== 'undefined');
+        if (!hasKalidokit) missing.push('Kalidokit (js/kalidokit.umd.js)');
 
-        if (missing.length) {
+        if (typeof window.pc === 'undefined') {
             window.__vtfShowLoading('Gagal load aset lokal: ' + missing.join(', ') + '. Periksa folder assets/js/.');
             const st = byId('status');
             if (st) st.textContent = 'Gagal load ' + missing.join(', ') + ' — periksa aset lokal.';
+        } else if (missing.length > 0) {
+            const st = byId('status');
+            if (st) st.textContent = 'Peringatan: aset opsional belum termuat (' + missing.join(', ') + ').';
         } else if (window.__vtfStyleFailed) {
             const st2 = byId('status');
             if (st2) st2.textContent = 'Peringatan: css/style.css gagal dimuat — periksa folder assets/css/style.css.';
