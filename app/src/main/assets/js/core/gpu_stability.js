@@ -134,9 +134,6 @@
             try {
                 const dprCap = Math.max(0.75, Math.min(2.5, Number(currentSettings.maxPixelRatio) || 1.5));
                 pcApp.graphicsDevice.maxPixelRatio = dprCap;
-                if (currentSettings.precision === 'highp' || currentSettings.precision === 'mediump') {
-                    pcApp.graphicsDevice.precision = currentSettings.precision;
-                }
                 if (typeof pcApp.resizeCanvas === 'function') {
                     pcApp.resizeCanvas();
                 }
@@ -146,10 +143,6 @@
         }
 
         applyLightsConfig(pcApp);
-
-        if (pcApp && typeof pcApp.render === 'function') {
-            try { pcApp.render(); } catch (e) {}
-        }
 
         if (typeof window.__vtfOnGpuSettingsUpdated === 'function') {
             try { window.__vtfOnGpuSettingsUpdated(getInfo()); } catch (e) {}
@@ -182,10 +175,6 @@
             if (Array.isArray(window.redoStack) && window.redoStack.length > 0) {
                 freed += window.redoStack.length;
                 window.redoStack.length = 0;
-            }
-            const pcApp = getPcAppSafe();
-            if (pcApp && typeof pcApp.render === 'function') {
-                pcApp.render();
             }
         } catch (e) {}
         lastGpuEvent = 'Trimmed history (' + freed + ' slots)';
@@ -239,10 +228,12 @@
                 }
             } catch (e) {}
         }
+        const activePrecision = (gd && gd.precision) ? String(gd.precision) : currentSettings.precision;
         return {
             renderer: String(rendererName),
             maxPixelRatio: gd ? gd.maxPixelRatio : currentSettings.maxPixelRatio,
-            precision: gd ? gd.precision : currentSettings.precision,
+            precision: activePrecision,
+            precisionNeedsReload: activePrecision !== currentSettings.precision,
             contextLostCount: contextLostCount,
             lastGpuEvent: lastGpuEvent
         };
@@ -264,14 +255,16 @@
     loadSavedSettings();
 
     let attempts = 0;
+    let lightsApplied = false;
     const initTimer = setInterval(function () {
         attempts += 1;
-        const pcApp = getPcAppSafe();
         bindContextEvents();
-        if (pcApp && pcApp.root) {
+        const pcApp = getPcAppSafe();
+        if (pcApp && pcApp.root && !lightsApplied) {
+            lightsApplied = true;
             applySettings(null, false);
-            clearInterval(initTimer);
-        } else if (attempts >= 120) {
+        }
+        if ((listenersBound && lightsApplied) || attempts >= 150) {
             clearInterval(initTimer);
         }
     }, 100);
