@@ -37,6 +37,17 @@
         return null;
     }
 
+    function callGlobalFn(name, ...args) {
+        if (typeof window[name] === 'function') {
+            return window[name](...args);
+        }
+        try {
+            const fn = Function('"use strict"; return (typeof ' + name + ' === "function") ? ' + name + ' : null;')();
+            if (typeof fn === 'function') return fn(...args);
+        } catch (e) {}
+        return undefined;
+    }
+
     function getUndoStack() {
         if (!Array.isArray(window.undoStack)) window.undoStack = [];
         return window.undoStack;
@@ -76,7 +87,7 @@
     function loadState(stateStr, skipClearRedo) {
         const pcApp = getHistoryApp();
         const st = getSceneStateSafe();
-        if (!pcApp || !pcApp.root || !st) return;
+        if (!pcApp || !pcApp.root || !st) return false;
 
         let arr;
         try {
@@ -87,22 +98,28 @@
             }
         } catch (e) {
             logHistory("Gagal parse state: " + e.message);
-            return;
+            return false;
         }
 
-        if (!Array.isArray(arr)) return;
+        if (!Array.isArray(arr)) {
+            logHistory("Format state tidak valid: bukan array.");
+            return false;
+        }
 
-        if (typeof selectObject === 'function') selectObject(null);
-        if (typeof resetMode === 'function') resetMode();
+        callGlobalFn('selectObject', null);
+        callGlobalFn('resetMode');
 
         (st.objects || []).forEach(o => {
-            if (typeof destroyEntity === 'function') destroyEntity(o);
-            else if (o && typeof o.destroy === 'function') o.destroy();
+            if (typeof window.destroyEntity === 'function') {
+                window.destroyEntity(o);
+            } else if (o && typeof o.destroy === 'function') {
+                o.destroy();
+            }
         });
         st.objects = [];
 
         arr.forEach(item => {
-            if (!item) return;
+            if (!item || typeof item !== 'object') return;
             const e = new pc.Entity(item.name || 'Obj');
             const p = Array.isArray(item.pos) ? item.pos : [0, 0, 0];
             const r = Array.isArray(item.rot) ? item.rot : [0, 0, 0];
@@ -179,10 +196,11 @@
         if (!skipClearRedo) {
             getRedoStack().length = 0;
         }
-        if (typeof updateTree === 'function') updateTree();
-        if (st.objects.length > 0 && typeof selectObject === 'function') {
-            selectObject(st.objects[st.objects.length - 1]);
+        callGlobalFn('updateTree');
+        if (st.objects.length > 0) {
+            callGlobalFn('selectObject', st.objects[st.objects.length - 1]);
         }
+        return true;
     }
     window.loadState = loadState;
 
@@ -215,8 +233,11 @@
         const current = uStack.pop();
         rStack.push(current);
         const prev = uStack[uStack.length - 1];
-        loadState(prev, true);
-        setHistoryStatus("↶ Undo berhasil.");
+        if (loadState(prev, true)) {
+            setHistoryStatus("↶ Undo berhasil.");
+        } else {
+            setHistoryStatus("⚠ Gagal melakukan Undo.");
+        }
     }
     window.triggerUndo = triggerUndo;
 
@@ -229,8 +250,11 @@
         }
         const nextState = rStack.pop();
         uStack.push(nextState);
-        loadState(nextState, true);
-        setHistoryStatus("↷ Redo berhasil.");
+        if (loadState(nextState, true)) {
+            setHistoryStatus("↷ Redo berhasil.");
+        } else {
+            setHistoryStatus("⚠ Gagal melakukan Redo.");
+        }
     }
     window.triggerRedo = triggerRedo;
 
