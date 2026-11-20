@@ -41,6 +41,23 @@
         return fallback.slice();
     }
 
+    function extractMorphWeights(entity) {
+        if (!entity || !entity._morphInstance || !Array.isArray(entity._morphNames)) return [];
+        const weights = [];
+        for (let i = 0; i < entity._morphNames.length; i++) {
+            let w = 0;
+            try {
+                if (typeof entity._morphInstance.getWeight === 'function') {
+                    w = Number(entity._morphInstance.getWeight(i));
+                }
+            } catch (e) {
+                w = 0;
+            }
+            weights.push(isFinite(w) ? Math.max(0, Math.min(1, w)) : 0);
+        }
+        return weights;
+    }
+
     function serializeEntitySnapshot(entity, includeMeshData) {
         if (!entity || typeof entity.getPosition !== 'function') return null;
 
@@ -65,6 +82,9 @@
             comp && Array.isArray(comp.meshInstances) && comp.meshInstances.some(mi => mi && mi.skinInstance != null)
         );
 
+        const morphNames = Array.isArray(entity._morphNames) ? entity._morphNames.slice() : [];
+        const morphWeights = extractMorphWeights(entity);
+
         return {
             name: entity.name || 'Obj',
             type: objType,
@@ -78,6 +98,8 @@
             metal: (mat && typeof mat.metalness === 'number' && isFinite(mat.metalness)) ? mat.metalness : 0,
             meshDataArr: meshDataArr,
             hasMeshCache: !!(Array.isArray(entity._meshCache) && entity._meshCache.length > 0),
+            morphNames: morphNames,
+            morphWeights: morphWeights,
             animSpin: !!(entity._animSpin),
             animPulse: !!(entity._animPulse),
             animWobble: !!(entity._animWobble),
