@@ -39,72 +39,50 @@
     }
     window.syncMotionButtons = syncMotionButtons;
 
-    logToolbar("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + (window.devicePixelRatio || 1));
+    function bindOnce(el, handler) {
+        if (!el || el.dataset.vtfToolbarBound === '1') return;
+        el.dataset.vtfToolbarBound = '1';
+        el.onclick = handler;
+    }
 
-    // === TOOLBAR SHORTCUT BINDINGS ===
-    if (byId('btnUndo')) {
-        byId('btnUndo').onclick = () => {
+    function bindToolbarControls() {
+        bindOnce(byId('btnUndo'), () => {
             if (typeof triggerUndo === 'function') triggerUndo();
             else if (byId('undo')) byId('undo').click();
-        };
-    }
-    if (byId('btnRedo')) {
-        byId('btnRedo').onclick = () => {
+        });
+        bindOnce(byId('btnRedo'), () => {
             if (typeof triggerRedo === 'function') triggerRedo();
             else if (byId('redo')) byId('redo').click();
-        };
-    }
-    if (byId('btnSave')) {
-        byId('btnSave').onclick = () => {
+        });
+        bindOnce(byId('btnSave'), () => {
             if (typeof triggerSaveScene === 'function') triggerSaveScene();
             else if (byId('save')) byId('save').click();
-        };
-    }
-    if (byId('btnImport')) {
-        byId('btnImport').onclick = () => {
+        });
+        bindOnce(byId('btnImport'), () => {
             const f = byId('file');
             if (f) f.click();
-        };
-    }
-    if (byId('btnScreenshot')) {
-        byId('btnScreenshot').onclick = () => {
+        });
+        bindOnce(byId('btnScreenshot'), () => {
             if (typeof takeScreenshot === 'function') takeScreenshot();
             else if (byId('screenshot')) byId('screenshot').click();
-        };
-    }
+        });
 
-    // === MENU FILE: IMPORT + EXPORT VRM (x-vrm) ===
-    if (byId('importMenu')) {
-        byId('importMenu').onclick = () => {
+        bindOnce(byId('importMenu'), () => {
             const f = byId('file');
             if (f) f.click();
-        };
-    }
-    if (byId('x-vrm')) {
-        byId('x-vrm').onclick = () => {
+        });
+        bindOnce(byId('loadSceneBtn'), () => {
+            const jf = byId('jsonFile');
+            if (jf) jf.click();
+        });
+        bindOnce(byId('x-vrm'), () => {
             if (typeof exportVRM === 'function') exportVRM();
-            else alert("Fungsi exportVRM tidak ditemukan.\n\nPastikan modul export ter-load.");
-        };
-    }
+            else setToolbarStatus("⚠ Fungsi exportVRM tidak ditemukan.");
+        });
 
-    // === KEYBOARD SHORTCUTS ===
-    window.addEventListener('keydown', (e) => {
-        if (!e.target || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-        if (e.repeat) return;
-        if (e.key === 'z' || e.key === 'Z') {
-            if (e.ctrlKey || e.metaKey) e.preventDefault();
-            if (typeof triggerUndo === 'function') triggerUndo();
-        } else if (e.key === 'y' || e.key === 'Y') {
-            if (e.ctrlKey || e.metaKey) e.preventDefault();
-            if (typeof triggerRedo === 'function') triggerRedo();
-        }
-    });
-
-    // === MOTION TOGGLES ===
-    if (byId('animSpin')) {
-        byId('animSpin').onclick = () => {
+        bindOnce(byId('animSpin'), () => {
             const target = getSelectedTarget();
-            if (!target) return alert("Pilih objek dulu!");
+            if (!target) return setToolbarStatus("⚠ Pilih objek dulu untuk Auto-Spin.");
             target._animSpin = !target._animSpin;
             if (target._animSpin && !target._baseRot && typeof target.getEulerAngles === 'function') {
                 target._baseRot = target.getEulerAngles().clone();
@@ -112,12 +90,11 @@
             syncMotionButtons(target);
             if (typeof saveState === 'function') saveState();
             setToolbarStatus("Auto-Spin: " + (target._animSpin ? "ON" : "OFF"));
-        };
-    }
-    if (byId('animPulse')) {
-        byId('animPulse').onclick = () => {
+        });
+
+        bindOnce(byId('animPulse'), () => {
             const target = getSelectedTarget();
-            if (!target) return alert("Pilih objek dulu!");
+            if (!target) return setToolbarStatus("⚠ Pilih objek dulu untuk Idle Pulse.");
             target._animPulse = !target._animPulse;
             if (target._animPulse && !target._baseScale && typeof target.getLocalScale === 'function') {
                 target._baseScale = target.getLocalScale().clone();
@@ -125,12 +102,11 @@
             syncMotionButtons(target);
             if (typeof saveState === 'function') saveState();
             setToolbarStatus("Idle Pulse: " + (target._animPulse ? "ON" : "OFF"));
-        };
-    }
-    if (byId('animWobble')) {
-        byId('animWobble').onclick = () => {
+        });
+
+        bindOnce(byId('animWobble'), () => {
             const target = getSelectedTarget();
-            if (!target) return alert("Pilih objek dulu!");
+            if (!target) return setToolbarStatus("⚠ Pilih objek dulu untuk Spring Wobble.");
             target._animWobble = !target._animWobble;
             if (target._animWobble && !target._baseRot && typeof target.getEulerAngles === 'function') {
                 target._baseRot = target.getEulerAngles().clone();
@@ -138,18 +114,74 @@
             syncMotionButtons(target);
             if (typeof saveState === 'function') saveState();
             setToolbarStatus("Spring Wobble: " + (target._animWobble ? "ON" : "OFF"));
-        };
+        });
+
+        const animSel = byId('animSelect');
+        if (animSel && animSel.dataset.vtfToolbarBound !== '1') {
+            animSel.dataset.vtfToolbarBound = '1';
+            animSel.onchange = (e) => {
+                const target = getSelectedTarget();
+                if (!target || !Array.isArray(target._animAssets)) return;
+                const idx = parseInt(e.target.value, 10);
+                if (isNaN(idx) || idx < 0 || idx >= target._animAssets.length) return;
+                if (!target.animation) target.addComponent('animation');
+                target.animation.asset = target._animAssets[idx];
+                target.animation.loop = true;
+                const animName = (Array.isArray(target._animNames) && target._animNames[idx]) ? target._animNames[idx] : `Anim_${idx}`;
+                setToolbarStatus("Animasi siap: " + animName);
+            };
+        }
+
+        bindOnce(byId('animPlay'), () => {
+            const target = getSelectedTarget();
+            if (target && target.animation && target.animation.asset) {
+                target.animation.play();
+                setToolbarStatus("▶ Playing: " + (target.animation.asset.name || "Clip"));
+            }
+        });
+        bindOnce(byId('animPause'), () => {
+            const target = getSelectedTarget();
+            if (target && target.animation) {
+                target.animation.pause();
+                setToolbarStatus("⏸ Paused");
+            }
+        });
+        bindOnce(byId('animStop'), () => {
+            const target = getSelectedTarget();
+            if (target && target.animation) {
+                target.animation.stop();
+                setToolbarStatus("⏹ Stopped");
+            }
+        });
     }
 
-    document.addEventListener('click', (e) => {
-        if (e.target && typeof e.target.closest === 'function' && e.target.closest('#tree')) {
-            setTimeout(() => {
-                syncMotionButtons(getSelectedTarget());
-            }, 0);
-        }
-    });
+    window.__vtfBindToolbarControls = bindToolbarControls;
 
-    // === PANEL CONTROLS (delegasi tunggal via boot.js) ===
+    logToolbar("=== ENV: innerWidth=" + window.innerWidth + " innerHeight=" + window.innerHeight + " dpr=" + (window.devicePixelRatio || 1));
+
+    if (!window.__vtfKeyboardBound) {
+        window.__vtfKeyboardBound = true;
+        window.addEventListener('keydown', (e) => {
+            if (!e.target || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if (e.repeat) return;
+            if (e.key === 'z' || e.key === 'Z') {
+                if (e.ctrlKey || e.metaKey) e.preventDefault();
+                if (typeof triggerUndo === 'function') triggerUndo();
+            } else if (e.key === 'y' || e.key === 'Y') {
+                if (e.ctrlKey || e.metaKey) e.preventDefault();
+                if (typeof triggerRedo === 'function') triggerRedo();
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (e.target && typeof e.target.closest === 'function' && e.target.closest('#tree')) {
+                setTimeout(() => {
+                    syncMotionButtons(getSelectedTarget());
+                }, 0);
+            }
+        });
+    }
+
     function closeSidePanel(panelId) {
         if (typeof window.__vtfSetPanel === 'function') {
             window.__vtfSetPanel(panelId, false);
@@ -182,46 +214,10 @@
     }
     window.toggleSidePanel = toggleSidePanel;
 
-    // === ANIMATION CLIP CONTROLS ===
-    if (byId('animSelect')) {
-        byId('animSelect').onchange = (e) => {
-            const target = getSelectedTarget();
-            if (!target || !Array.isArray(target._animAssets)) return;
-            const idx = parseInt(e.target.value, 10);
-            if (isNaN(idx) || idx < 0 || idx >= target._animAssets.length) return;
-            if (!target.animation) target.addComponent('animation');
-            target.animation.asset = target._animAssets[idx];
-            target.animation.loop = true;
-            const animName = (Array.isArray(target._animNames) && target._animNames[idx]) ? target._animNames[idx] : `Anim_${idx}`;
-            setToolbarStatus("Animasi siap: " + animName);
-        };
-    }
-    if (byId('animPlay')) {
-        byId('animPlay').onclick = () => {
-            const target = getSelectedTarget();
-            if (target && target.animation && target.animation.asset) {
-                target.animation.play();
-                setToolbarStatus("▶ Playing: " + (target.animation.asset.name || "Clip"));
-            }
-        };
-    }
-    if (byId('animPause')) {
-        byId('animPause').onclick = () => {
-            const target = getSelectedTarget();
-            if (target && target.animation) {
-                target.animation.pause();
-                setToolbarStatus("⏸ Paused");
-            }
-        };
-    }
-    if (byId('animStop')) {
-        byId('animStop').onclick = () => {
-            const target = getSelectedTarget();
-            if (target && target.animation) {
-                target.animation.stop();
-                setToolbarStatus("⏹ Stopped");
-            }
-        };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindToolbarControls);
+    } else {
+        bindToolbarControls();
     }
 
     logToolbar("=== toolbar.js DONE ===");
