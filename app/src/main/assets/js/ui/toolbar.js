@@ -75,6 +75,10 @@
             const jf = byId('jsonFile');
             if (jf) jf.click();
         });
+        bindOnce(byId('x-obj'), () => {
+            if (typeof window.exportOBJ === 'function') window.exportOBJ();
+            else setToolbarStatus("⚠ Fungsi exportOBJ belum siap.");
+        });
         bindOnce(byId('x-vrm'), () => {
             if (typeof exportVRM === 'function') exportVRM();
             else setToolbarStatus("⚠ Fungsi exportVRM tidak ditemukan.");
