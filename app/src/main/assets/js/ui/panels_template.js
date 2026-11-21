@@ -107,6 +107,25 @@
         '</div>'
     ].join('');
 
+    function bindAddObjectButtons() {
+        document.querySelectorAll('[data-add]').forEach(btn => {
+            if (btn.dataset.vtfAddBound === '1') return;
+            btn.dataset.vtfAddBound = '1';
+            btn.addEventListener('click', () => {
+                const kind = btn.getAttribute('data-add');
+                if (!kind) return;
+                if (typeof window.addObject === 'function') {
+                    window.addObject(kind);
+                    return;
+                }
+                try {
+                    const fn = Function('"use strict"; return (typeof addObject === "function") ? addObject : null;')();
+                    if (typeof fn === 'function') fn(kind);
+                } catch (e) {}
+            });
+        });
+    }
+
     function renderPanelsTemplates() {
         const leftBody = document.getElementById('leftBody');
         const rightBody = document.getElementById('rightBody');
@@ -119,6 +138,8 @@
             rightBody.innerHTML = RIGHT_HTML;
             rightBody.dataset.vtfRendered = '1';
         }
+
+        bindAddObjectButtons();
 
         if (typeof window.__vtfBindTransformInputs === 'function') {
             window.__vtfBindTransformInputs();
