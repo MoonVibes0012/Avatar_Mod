@@ -27,6 +27,17 @@
         return snapEnabled ? Math.round(v * 2) / 2 : v;
     }
 
+    function parseHexToRgb01(hex) {
+        if (typeof hex !== 'string') return null;
+        const clean = hex.trim();
+        if (!/^#[0-9a-fA-F]{6}$/.test(clean)) return null;
+        return {
+            r: parseInt(clean.slice(1, 3), 16) / 255,
+            g: parseInt(clean.slice(3, 5), 16) / 255,
+            b: parseInt(clean.slice(5, 7), 16) / 255
+        };
+    }
+
     function bindNumericSlider(id, outId, fn, sliderId, sMin, sMax, decimals) {
         const numEl = byId(id);
         const outEl = byId(outId);
@@ -182,12 +193,10 @@
         if (colorEl && colorEl.dataset.vtfBound !== '1') {
             colorEl.dataset.vtfBound = '1';
             colorEl.oninput = (e) => {
-                const hex = e.target.value;
-                const r = parseInt(hex.slice(1, 3), 16) / 255;
-                const g = parseInt(hex.slice(3, 5), 16) / 255;
-                const b = parseInt(hex.slice(5, 7), 16) / 255;
+                const rgb = parseHexToRgb01(e.target.value);
+                if (!rgb) return;
                 forEachSelectedMaterial(m => {
-                    m.diffuse = new pc.Color(r, g, b);
+                    m.diffuse = new pc.Color(rgb.r, rgb.g, rgb.b);
                 });
             };
             colorEl.onchange = () => {
