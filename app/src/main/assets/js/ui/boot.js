@@ -1,173 +1,215 @@
 /* ===== VTuber Forge — js/ui/boot.js ===== */
-// Boot UI helper: panel drawer tunggal (anti double-toggle), loading overlay, & cek aset offline
+// Inisialisasi UI utama: render panel kiri & kanan, binding tombol atas, & toggle panel
 
 (function () {
     'use strict';
 
-    const byId = (id) => document.getElementById(id);
-
-    function resolvePanelId(el) {
-        if (!el) return null;
-        if (el.id === 'parts') return 'left';
-        if (el.id === 'inspector') return 'right';
-        const dp = el.getAttribute('data-panel');
-        if (dp === 'left' || dp === 'right') return dp;
-        return null;
+    function byId(id) {
+        return document.getElementById(id);
     }
 
-    function setPanel(id, open) {
-        if (id !== 'left' && id !== 'right') return;
-        const panel = byId(id);
+    function setBootStatus(msg) {
+        const el = byId('status');
+        if (el) el.textContent = msg;
+    }
+
+    function ensureBaseUiLayers() {
+        const canvas = byId('gl');
+        if (canvas) {
+            canvas.style.position = 'fixed';
+            canvas.style.inset = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvas.style.zIndex = '1';
+            canvas.style.display = 'block';
+        }
+
+        const topBar = document.querySelector('.top');
+        if (topBar) {
+            topBar.style.position = 'fixed';
+            topBar.style.top = '0';
+            topBar.style.left = '0';
+            topBar.style.right = '0';
+            topBar.style.zIndex = '30';
+            topBar.style.display = 'flex';
+            topBar.style.flexWrap = 'wrap';
+            topBar.style.alignItems = 'center';
+            topBar.style.gap = '4px';
+            topBar.style.padding = '6px';
+            topBar.style.background = 'rgba(15, 19, 28, 0.85)';
+        }
+
+        ['left', 'right'].forEach((id) => {
+            const panel = byId(id);
+            if (!panel) return;
+            panel.style.position = 'fixed';
+            panel.style.top = '44px';
+            panel.style.bottom = '28px';
+            panel.style.width = '270px';
+            panel.style.maxWidth = '82vw';
+            panel.style.zIndex = '25';
+            panel.style.background = 'rgba(16, 20, 30, 0.92)';
+            panel.style.color = '#eef4ff';
+            panel.style.overflowY = 'auto';
+            if (id === 'left') panel.style.left = '0';
+            if (id === 'right') panel.style.right = '0';
+        });
+
+        const statusEl = byId('status');
+        if (statusEl) {
+            statusEl.style.position = 'fixed';
+            statusEl.style.left = '8px';
+            statusEl.style.bottom = '6px';
+            statusEl.style.zIndex = '30';
+            statusEl.style.pointerEvents = 'none';
+            statusEl.style.background = 'rgba(15, 19, 28, 0.8)';
+            statusEl.style.color = '#cfe4ff';
+            statusEl.style.padding = '3px 8px';
+            statusEl.style.borderRadius = '6px';
+            statusEl.style.fontSize = '11px';
+        }
+    }
+
+    function setPanelOpen(panelId, open) {
+        const panel = byId(panelId);
+        const backdrop = byId('panelBackdrop');
         if (!panel) return;
 
-        const nextOpen = !!open;
-        if (nextOpen) {
-            const otherId = id === 'left' ? 'right' : 'left';
-            const otherPanel = byId(otherId);
-            if (otherPanel) {
-                otherPanel.classList.remove('mobile-open');
-                otherPanel.setAttribute('aria-hidden', 'true');
-            }
-            const otherBtn = byId(otherId === 'left' ? 'parts' : 'inspector');
-            if (otherBtn) otherBtn.setAttribute('aria-expanded', 'false');
+        ensureBaseUiLayers();
+        panel.classList.toggle('mobile-open', !!open);
+        panel.classList.toggle('open', !!open);
+        panel.style.display = open ? 'block' : 'none';
+
+        const leftOpen = !!(byId('left') && byId('left').style.display !== 'none');
+        const rightOpen = !!(byId('right') && byId('right').style.display !== 'none');
+        if (backdrop) {
+            const anyOpen = leftOpen || rightOpen;
+            backdrop.hidden = !anyOpen;
+            backdrop.style.display = anyOpen ? 'block' : 'none';
+            backdrop.style.position = 'fixed';
+            backdrop.style.inset = '0';
+            backdrop.style.zIndex = '20';
         }
-
-        panel.classList.toggle('mobile-open', nextOpen);
-        panel.style.removeProperty('display');
-        panel.setAttribute('aria-hidden', nextOpen ? 'false' : 'true');
-        if (nextOpen) {
-            panel.scrollTop = 0;
-        }
-
-        const btn = byId(id === 'left' ? 'parts' : 'inspector');
-        if (btn) btn.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-
-        const backdrop = byId('panelBackdrop');
-        const anyOpen = !!document.querySelector('.panel.mobile-open');
-        if (backdrop) backdrop.hidden = !anyOpen;
     }
 
-    function togglePanel(id) {
-        if (id !== 'left' && id !== 'right') return;
-        const panel = byId(id);
-        const isOpen = !!(panel && panel.classList.contains('mobile-open'));
-        setPanel(id, !isOpen);
+    function togglePanel(panelId) {
+        const panel = byId(panelId);
+        if (!panel) return;
+        const isVisible = panel.style.display !== 'none' &&
+            (panel.classList.contains('mobile-open') || panel.classList.contains('open') || panel.style.display === 'block');
+        const otherId = panelId === 'left' ? 'right' : 'left';
+        if (!isVisible) {
+            setPanelOpen(otherId, false);
+            setPanelOpen(panelId, true);
+        } else {
+            setPanelOpen(panelId, false);
+        }
     }
 
-    window.__vtfSetPanel = setPanel;
+    window.__vtfSetPanel = setPanelOpen;
     window.__vtfTogglePanel = togglePanel;
 
-    if (!window.__vtfPanelDelegationBound) {
-        window.__vtfPanelDelegationBound = true;
-
-        document.addEventListener('click', function (e) {
-            const target = e.target;
-            if (!target || typeof target.closest !== 'function') return;
-
-            const closer = target.closest('.btn-close-panel');
-            if (closer) {
-                e.preventDefault();
-                const panelId = closer.getAttribute('data-panel');
-                if (panelId === 'left' || panelId === 'right') {
-                    setPanel(panelId, false);
-                }
-                return;
+    function rebindSubSystems() {
+        try {
+            if (typeof window.__vtfBindTransformInputs === 'function') window.__vtfBindTransformInputs();
+        } catch (e) {}
+        try {
+            if (typeof window.__vtfBindMaterialInputs === 'function') window.__vtfBindMaterialInputs();
+        } catch (e) {}
+        try {
+            if (typeof window.__vtfBindMotionControls === 'function') window.__vtfBindMotionControls();
+        } catch (e) {}
+        try {
+            if (typeof window.__vtfBindToolbarControls === 'function') window.__vtfBindToolbarControls();
+        } catch (e) {}
+        try {
+            if (window.VtfSceneOps && typeof window.VtfSceneOps.bindButtons === 'function') {
+                window.VtfSceneOps.bindButtons();
             }
-
-            if (target.id === 'panelBackdrop') {
-                e.preventDefault();
-                setPanel('left', false);
-                setPanel('right', false);
-                return;
+        } catch (e) {}
+        try {
+            if (window.AnatomyBridgeUi && typeof window.AnatomyBridgeUi.refresh === 'function') {
+                window.AnatomyBridgeUi.refresh();
             }
-
-            const opener = target.closest('#parts, #inspector, [data-panel]');
-            if (opener) {
-                const resolvedId = resolvePanelId(opener);
-                if (resolvedId) {
-                    e.preventDefault();
-                    togglePanel(resolvedId);
-                }
-            }
-        });
-
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') {
-                setPanel('left', false);
-                setPanel('right', false);
-            }
-        });
+        } catch (e) {}
     }
 
-    const loadSceneBtn = byId('loadSceneBtn');
-    const jsonFileInp = byId('jsonFile');
-    if (loadSceneBtn && jsonFileInp) {
-        loadSceneBtn.addEventListener('click', function () {
-            jsonFileInp.click();
-        });
-    }
+    function bootUi() {
+        ensureBaseUiLayers();
 
-    const dbgBtn = byId('btnDebug');
-    if (dbgBtn) {
-        dbgBtn.addEventListener('click', function () {
-            if (typeof window.toggleDebug === 'function') {
-                window.toggleDebug();
-                return;
-            }
-            const ov = byId('debugOverlay');
-            if (ov) ov.style.display = (ov.style.display === 'block' ? 'none' : 'block');
-        });
-    }
-
-    const shot2 = byId('screenshot');
-    const shot1 = byId('btnScreenshot');
-    if (shot2 && shot1) {
-        shot2.addEventListener('click', function () {
-            shot1.click();
-        });
-    }
-
-    const imp2 = byId('importMenu');
-    const imp1 = byId('btnImport');
-    if (imp2 && imp1) {
-        imp2.addEventListener('click', function () {
-            imp1.click();
-        });
-    }
-
-    window.__vtfShowLoading = function (text) {
-        const ov = byId('loadingOverlay');
-        if (!ov) return;
-        if (text) {
-            const t = byId('loadingText');
-            if (t) t.textContent = text;
+        if (typeof window.renderPanelsTemplates === 'function') {
+            window.renderPanelsTemplates();
         }
-        ov.style.display = 'flex';
-    };
 
-    window.__vtfHideLoading = function () {
-        const ov = byId('loadingOverlay');
-        if (!ov) return;
-        ov.style.display = 'none';
-    };
-
-    window.addEventListener('load', function () {
-        const missing = [];
-        if (typeof window.pc === 'undefined') missing.push('PlayCanvas (js/playcanvas.min.js)');
-        if (typeof window.FaceMesh === 'undefined') missing.push('MediaPipe FaceMesh (js/face_mesh.js)');
-        const hasKalidokit = (typeof window.Kalidokit !== 'undefined') || (typeof window.KalidoKit !== 'undefined');
-        if (!hasKalidokit) missing.push('Kalidokit (js/kalidokit.umd.js)');
-
-        if (typeof window.pc === 'undefined') {
-            window.__vtfShowLoading('Gagal load aset lokal: ' + missing.join(', ') + '. Periksa folder assets/js/.');
-            const st = byId('status');
-            if (st) st.textContent = 'Gagal load ' + missing.join(', ') + ' — periksa aset lokal.';
-        } else if (missing.length > 0) {
-            const st = byId('status');
-            if (st) st.textContent = 'Peringatan: aset opsional belum termuat (' + missing.join(', ') + ').';
-        } else if (window.__vtfStyleFailed) {
-            const st2 = byId('status');
-            if (st2) st2.textContent = 'Peringatan: css/style.css gagal dimuat — periksa folder assets/css/style.css.';
+        const partsBtn = byId('parts');
+        if (partsBtn && partsBtn.dataset.vtfBootBound !== '1') {
+            partsBtn.dataset.vtfBootBound = '1';
+            partsBtn.onclick = function () {
+                togglePanel('left');
+            };
         }
-    });
+
+        const inspBtn = byId('inspector');
+        if (inspBtn && inspBtn.dataset.vtfBootBound !== '1') {
+            inspBtn.dataset.vtfBootBound = '1';
+            inspBtn.onclick = function () {
+                togglePanel('right');
+            };
+        }
+
+        document.querySelectorAll('.btn-close-panel').forEach((btn) => {
+            if (btn.dataset.vtfBootBound === '1') return;
+            btn.dataset.vtfBootBound = '1';
+            btn.onclick = function () {
+                const targetPanel = btn.getAttribute('data-panel');
+                if (targetPanel) setPanelOpen(targetPanel, false);
+            };
+        });
+
+        const backdrop = byId('panelBackdrop');
+        if (backdrop && backdrop.dataset.vtfBootBound !== '1') {
+            backdrop.dataset.vtfBootBound = '1';
+            backdrop.onclick = function () {
+                setPanelOpen('left', false);
+                setPanelOpen('right', false);
+            };
+        }
+
+        const debugBtn = byId('btnDebug');
+        if (debugBtn && debugBtn.dataset.vtfBootBound !== '1') {
+            debugBtn.dataset.vtfBootBound = '1';
+            debugBtn.onclick = function () {
+                const dbgEl = byId('debugOverlay');
+                if (!dbgEl) return;
+                const nextShow = dbgEl.style.display === 'none';
+                dbgEl.style.display = nextShow ? 'block' : 'none';
+                dbgEl.style.position = 'fixed';
+                dbgEl.style.left = '8px';
+                dbgEl.style.bottom = '32px';
+                dbgEl.style.zIndex = '40';
+                dbgEl.style.maxHeight = '35vh';
+                dbgEl.style.maxWidth = '90vw';
+                dbgEl.style.overflow = 'auto';
+                dbgEl.style.background = 'rgba(0, 0, 0, 0.85)';
+                dbgEl.style.color = '#8ef5a5';
+                dbgEl.style.padding = '6px 8px';
+                dbgEl.style.fontSize = '10px';
+            };
+        }
+
+        // Default tertutup di layar kecil agar canvas tetap lega, tapi tombol & isi panel siap dibuka
+        setPanelOpen('left', false);
+        setPanelOpen('right', false);
+
+        rebindSubSystems();
+        setBootStatus('Siap!');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootUi);
+    } else {
+        bootUi();
+    }
+
+    window.__vtfBootUi = bootUi;
 })();
