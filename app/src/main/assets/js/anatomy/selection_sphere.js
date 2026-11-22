@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/anatomy/selection_sphere.js ===== */
-// Bola penanda saat kotak kecil anatomi di-tap + interaksi sentuh (tap, drag, hysteresis) di WebView
+// Bola penanda saat kotak kecil anatomi di-tap + interaksi sentuh (tap, drag, hysteresis, camera lock)
 
 (function () {
     'use strict';
@@ -18,7 +18,9 @@
     let dragMode = 'rotate'; // 'rotate' | 'translate'
 
     let pointerDown = false;
+    let armedForSphereDrag = false;
     let isDraggingSphere = false;
+    let activePointerId = null;
     let startClientX = 0;
     let startClientY = 0;
     let lastClientX = 0;
@@ -92,28 +94,33 @@
 
     function setCameraOrbitLocked(locked) {
         const camEnt = getActiveCameraEntity();
-        const pcApp = getPcAppSafe();
 
         if (locked) {
+            window.__vtfAnatomyDragging = true;
             if (cameraLockSaved === null) {
                 cameraLockSaved = {
-                    camEnabled: camEnt ? !!camEnt.enabled : true,
-                    orbitFn: window.orbitCam || null
+                    camEnabled: camEnt ? !!camEnt.enabled : true
                 };
             }
-            if (camEnt && camEnt._orbitLocked === undefined) {
+            if (camEnt) {
                 camEnt._orbitLocked = true;
             }
-            window.__vtfAnatomyDragging = true;
+            if (window.CameraControls) {
+                if (typeof window.CameraControls.clearGesture === 'function') {
+                    window.CameraControls.clearGesture();
+                } else {
+                    window.CameraControls._dragging = false;
+                    window.CameraControls._panning = false;
+                    window.CameraControls._pinchDist = 0;
+                    window.CameraControls._pinchMid = null;
+                }
+            }
         } else {
             window.__vtfAnatomyDragging = false;
             if (camEnt && camEnt._orbitLocked !== undefined) {
-                delete camEnt._orbitLocked;
+                try { delete camEnt._orbitLocked; } catch (e) { camEnt._orbitLocked = false; }
             }
             cameraLockSaved = null;
-            if (pcApp && typeof pcApp.render === 'function') {
-                // Biarkan render loop normal berjalan
-            }
         }
     }
 
@@ -167,10 +174,20 @@
         return dist <= SPHERE_HIT_RADIUS_PX;
     }
 
+    function resetPointerState(unlockCam) {
+        pointerDown = false;
+        armedForSphereDrag = false;
+        isDraggingSphere = false;
+        activePointerId = null;
+        if (unlockCam) {
+            setCameraOrbitLocked(false);
+        }
+    }
+
     function onPointerDown(e) {
         if (!enabled) return;
         if (e.target && typeof e.target.closest === 'function') {
-            if (e.target.closest('.panel, .top, #gpuSettingsModal, #debugOverlay, button, input, select')) {
+            if (e.target.closest('.panel, .top, #gpuSettingsModal, #debugOverlay, #anatomyFloatingHud, button, input, select')) {
                 return;
             }
         }
@@ -178,26 +195,32 @@
         if (!canvas || e.target !== canvas) return;
 
         pointerDown = true;
+        armedForSphereDrag = false;
         isDraggingSphere = false;
+        activePointerId = (typeof e.pointerId === 'number') ? e.pointerId : null;
         startClientX = e.clientX;
         startClientY = e.clientY;
         lastClientX = e.clientX;
         lastClientY = e.clientY;
 
         if (activePartId && isHitOnActiveSphere(e.clientX, e.clientY)) {
+            armedForSphereDrag = true;
             setCameraOrbitLocked(true);
         }
     }
 
     function onPointerMove(e) {
         if (!enabled || !pointerDown) return;
+        if (activePointerId !== null && typeof e.pointerId === 'number' && e.pointerId !== activePointerId) {
+            return;
+        }
 
         const dx = e.clientX - lastClientX;
         const dy = e.clientY - lastClientY;
         const totalMove = Math.hypot(e.clientX - startClientX, e.clientY - startClientY);
 
         if (!isDraggingSphere && activePartId) {
-            const hitSphere = isHitOnActiveSphere(startClientX, startClientY);
+            const hitSphere = armedForSphereDrag || isHitOnActiveSphere(startClientX, startClientY);
             if (hitSphere && totalMove >= TOUCH_SLOP_PX) {
                 isDraggingSphere = true;
                 setCameraOrbitLocked(true);
@@ -208,11 +231,8 @@
         }
 
         if (isDraggingSphere && activePartId) {
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             e.stopPropagation();
-            if (typeof e.stopImmediatePropagation === 'function') {
-                e.stopImmediatePropagation();
-            }
             const camEnt = getActiveCameraEntity();
             if (typeof window.__vtfOnAnatomyDragMove === 'function') {
                 window.__vtfOnAnatomyDragMove(activePartId, dragMode, dx, dy, camEnt);
@@ -225,12 +245,17 @@
 
     function onPointerUp(e) {
         if (!pointerDown) return;
-        const totalMove = Math.hypot(e.clientX - startClientX, e.clientY - startClientY);
-        const wasDragging = isDraggingSphere;
+        if (activePointerId !== null && e && typeof e.pointerId === 'number' && e.pointerId !== activePointerId) {
+            return;
+        }
 
-        pointerDown = false;
-        isDraggingSphere = false;
-        setCameraOrbitLocked(false);
+        const endX = (e && typeof e.clientX === 'number') ? e.clientX : lastClientX;
+        const endY = (e && typeof e.clientY === 'number') ? e.clientY : lastClientY;
+        const totalMove = Math.hypot(endX - startClientX, endY - startClientY);
+        const wasDragging = isDraggingSphere;
+        const isCancel = !!(e && e.type === 'pointercancel');
+
+        resetPointerState(true);
 
         if (!enabled) return;
 
@@ -241,13 +266,16 @@
             return;
         }
 
-        // Tap ringan (di bawah batas geser): cek kotak kecil anatomi
-        if (totalMove < TOUCH_SLOP_PX && window.AnatomyAnchorBoxes) {
-            const hitPartId = window.AnatomyAnchorBoxes.hitTestScreenPoint(e.clientX, e.clientY, 36);
+        if (!isCancel && totalMove < TOUCH_SLOP_PX && window.AnatomyAnchorBoxes) {
+            const hitPartId = window.AnatomyAnchorBoxes.hitTestScreenPoint(endX, endY, 36);
             if (hitPartId && typeof window.__vtfOnAnatomyBoxTapped === 'function') {
                 window.__vtfOnAnatomyBoxTapped(hitPartId);
             }
         }
+    }
+
+    function onWindowBlur() {
+        resetPointerState(true);
     }
 
     function bindInputListeners() {
@@ -257,6 +285,7 @@
         window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
         window.addEventListener('pointerup', onPointerUp, { capture: true, passive: false });
         window.addEventListener('pointercancel', onPointerUp, { capture: true, passive: false });
+        window.addEventListener('blur', onWindowBlur);
     }
 
     function setEnabled(flag) {
@@ -264,13 +293,11 @@
         if (enabled) {
             bindInputListeners();
             ensureSphereVisuals();
-            if (activePartId && activeWorldPos) {
+            if (activePartId && activeWorldPos && sphereEntity) {
                 sphereEntity.enabled = true;
             }
         } else {
-            pointerDown = false;
-            isDraggingSphere = false;
-            setCameraOrbitLocked(false);
+            resetPointerState(true);
             if (sphereEntity) sphereEntity.enabled = false;
         }
     }
@@ -283,9 +310,7 @@
     }
 
     function destroyAll() {
-        pointerDown = false;
-        isDraggingSphere = false;
-        setCameraOrbitLocked(false);
+        resetPointerState(true);
         activePartId = null;
         activeWorldPos = null;
         if (ringEntity) {
