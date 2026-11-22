@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/core/gpu_stability.js ===== */
-// Modul stabilitas & pengaturan GPU PlayCanvas (preset performa/stabilitas & recovery WebGL context)
+// Pengaturan preset & stabilitas GPU (Balanced, Stability, Quality) + integrasi context recovery
 
 (function () {
     'use strict';
@@ -8,67 +8,34 @@
 
     const PRESETS = {
         balanced: {
-            label: 'Balanced (MP3 Friendly)',
+            preset: 'balanced',
             maxPixelRatio: 1.5,
             precision: 'mediump',
-            shadowsEnabled: false,
             ambientIntensity: 0.65,
-            keyLightIntensity: 1.35,
-            fillLightIntensity: 0.85,
+            shadowsEnabled: false,
             autoRecoverContext: true
         },
         stability: {
-            label: 'Max Stability (Low VRAM/GPU)',
+            preset: 'stability',
             maxPixelRatio: 1.0,
             precision: 'mediump',
-            shadowsEnabled: false,
             ambientIntensity: 0.72,
-            keyLightIntensity: 1.25,
-            fillLightIntensity: 0.80,
+            shadowsEnabled: false,
             autoRecoverContext: true
         },
         quality: {
-            label: 'High Visuals',
+            preset: 'quality',
             maxPixelRatio: 2.0,
             precision: 'highp',
-            shadowsEnabled: false,
-            ambientIntensity: 0.65,
-            keyLightIntensity: 1.40,
-            fillLightIntensity: 0.90,
+            ambientIntensity: 0.60,
+            shadowsEnabled: true,
             autoRecoverContext: true
         }
     };
 
-    const defaultSettings = {
-        preset: 'balanced',
-        maxPixelRatio: PRESETS.balanced.maxPixelRatio,
-        precision: PRESETS.balanced.precision,
-        shadowsEnabled: PRESETS.balanced.shadowsEnabled,
-        ambientIntensity: PRESETS.balanced.ambientIntensity,
-        keyLightIntensity: PRESETS.balanced.keyLightIntensity,
-        fillLightIntensity: PRESETS.balanced.fillLightIntensity,
-        autoRecoverContext: PRESETS.balanced.autoRecoverContext
-    };
+    let currentSettings = Object.assign({}, PRESETS.balanced);
 
-    let currentSettings = Object.assign({}, defaultSettings);
-    let contextLostCount = 0;
-    let lastGpuEvent = 'Normal';
-    let listenersBound = false;
-
-    function logGpu(msg) {
-        if (typeof window.dbg === 'function') {
-            try { window.dbg(msg); } catch (e) {}
-        } else if (typeof console !== 'undefined') {
-            console.log(msg);
-        }
-    }
-
-    function setGpuStatus(msg) {
-        const el = document.getElementById('status');
-        if (el) el.textContent = msg;
-    }
-
-    function getPcAppSafe() {
+    function getAppSafe() {
         if (typeof window.getPcApp === 'function') {
             const a = window.getPcApp();
             if (a) return a;
@@ -82,199 +49,126 @@
             const raw = window.localStorage.getItem(STORAGE_KEY);
             if (!raw) return;
             const parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object') return;
-            currentSettings = Object.assign({}, defaultSettings, parsed);
-            currentSettings.maxPixelRatio = Math.max(0.75, Math.min(2.5, Number(currentSettings.maxPixelRatio) || 1.5));
-            if (currentSettings.precision !== 'highp' && currentSettings.precision !== 'mediump') {
-                currentSettings.precision = 'mediump';
+            if (parsed && typeof parsed === 'object') {
+                currentSettings = Object.assign({}, PRESETS.balanced, parsed);
             }
         } catch (e) {}
     }
 
-    function saveSettingsToStorage() {
+    function persistSettings(saveToStorage) {
+        if (!saveToStorage) return;
         try {
             if (!window.localStorage) return;
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings));
         } catch (e) {}
     }
 
-    function applyLightsConfig(pcApp) {
-        if (!pcApp || !pcApp.root) return;
-        try {
-            const amb = Number(currentSettings.ambientIntensity);
-            const safeAmb = isFinite(amb) ? Math.max(0.1, Math.min(1.5, amb)) : 0.65;
-            if (pcApp.scene) {
-                pcApp.scene.ambientLight = new pc.Color(safeAmb, safeAmb, Math.min(1, safeAmb + 0.05));
-            }
-            const keyLight = pcApp.root.findByName('light');
-            if (keyLight && keyLight.light) {
-                keyLight.light.intensity = Math.max(0, Math.min(3, Number(currentSettings.keyLightIntensity) || 1.35));
-                keyLight.light.castShadows = !!currentSettings.shadowsEnabled;
-            }
-            const fillLight = pcApp.root.findByName('fillLight');
-            if (fillLight && fillLight.light) {
-                fillLight.light.intensity = Math.max(0, Math.min(3, Number(currentSettings.fillLightIntensity) || 0.85));
-                fillLight.light.castShadows = false;
-            }
-        } catch (e) {
-            logGpu("GPU light apply warning: " + e.message);
-        }
-    }
+    function applyToScene() {
+        const pcApp = getAppSafe();
+        const recovery = window.VtfGpuContextRecovery;
+        const dev = recovery ? recovery.getDeviceState() : null;
 
-    function applySettings(partialOrFull, persist) {
-        if (partialOrFull && typeof partialOrFull === 'object') {
-            currentSettings = Object.assign({}, currentSettings, partialOrFull);
-        }
-        if (persist !== false) {
-            saveSettingsToStorage();
-        }
-
-        const pcApp = getPcAppSafe();
         if (pcApp && pcApp.graphicsDevice) {
-            try {
-                const dprCap = Math.max(0.75, Math.min(2.5, Number(currentSettings.maxPixelRatio) || 1.5));
-                pcApp.graphicsDevice.maxPixelRatio = dprCap;
-                if (typeof pcApp.resizeCanvas === 'function') {
-                    pcApp.resizeCanvas();
-                }
-            } catch (e) {
-                logGpu("GPU device apply warning: " + e.message);
+            const gd = pcApp.graphicsDevice;
+            const nativeDpr = window.devicePixelRatio || 1;
+            const cap = Number(currentSettings.maxPixelRatio) || 1.5;
+            gd.maxPixelRatio = Math.max(0.5, Math.min(nativeDpr, cap));
+
+            const desiredPrec = (currentSettings.precision === 'highp') ? 'highp' : 'mediump';
+            if (dev) {
+                dev.precisionNeedsReload = (gd.precision && gd.precision !== desiredPrec);
+            }
+
+            if (typeof pcApp.resizeCanvas === 'function') {
+                try { pcApp.resizeCanvas(); } catch (e) {}
             }
         }
 
-        applyLightsConfig(pcApp);
+        if (pcApp && pcApp.scene) {
+            const amb = Number(currentSettings.ambientIntensity);
+            if (!isNaN(amb) && pcApp.scene.ambientLight) {
+                pcApp.scene.ambientLight.set(amb, amb, amb);
+            }
+            if (pcApp.root && typeof pcApp.root.findComponents === 'function') {
+                const lights = pcApp.root.findComponents('light');
+                for (let i = 0; i < lights.length; i++) {
+                    const l = lights[i];
+                    if (l && l.type === 'directional') {
+                        l.castShadows = !!currentSettings.shadowsEnabled;
+                    }
+                }
+            }
+        }
+
+        if (recovery) {
+            recovery.detectDeviceInfo(currentSettings);
+            recovery.bindContextEvents(
+                function () { return currentSettings; },
+                function () { applyToScene(); }
+            );
+        }
 
         if (typeof window.__vtfOnGpuSettingsUpdated === 'function') {
-            try { window.__vtfOnGpuSettingsUpdated(getInfo()); } catch (e) {}
+            try { window.__vtfOnGpuSettingsUpdated(); } catch (e) {}
         }
-        return getInfo();
     }
 
-    function applyPreset(presetName, persist) {
-        const key = PRESETS[presetName] ? presetName : 'balanced';
-        const p = PRESETS[key];
-        return applySettings({
-            preset: key,
-            maxPixelRatio: p.maxPixelRatio,
-            precision: p.precision,
-            shadowsEnabled: p.shadowsEnabled,
-            ambientIntensity: p.ambientIntensity,
-            keyLightIntensity: p.keyLightIntensity,
-            fillLightIntensity: p.fillLightIntensity,
-            autoRecoverContext: p.autoRecoverContext
-        }, persist);
+    function applyPreset(presetName, saveToStorage) {
+        const p = PRESETS[presetName] || PRESETS.balanced;
+        currentSettings = Object.assign({}, currentSettings, p);
+        persistSettings(!!saveToStorage);
+        applyToScene();
+    }
+
+    function applySettings(partial, saveToStorage) {
+        if (!partial || typeof partial !== 'object') return;
+        currentSettings = Object.assign({}, currentSettings, partial);
+        if (!partial.preset) {
+            currentSettings.preset = 'balanced';
+        }
+        persistSettings(!!saveToStorage);
+        applyToScene();
     }
 
     function trimGpuMemoryCache() {
-        let freed = 0;
-        try {
-            if (Array.isArray(window.undoStack) && window.undoStack.length > 5) {
-                const removed = window.undoStack.splice(0, window.undoStack.length - 5);
-                freed += removed.length;
-            }
-            if (Array.isArray(window.redoStack) && window.redoStack.length > 0) {
-                freed += window.redoStack.length;
-                window.redoStack.length = 0;
-            }
-        } catch (e) {}
-        lastGpuEvent = 'Trimmed history (' + freed + ' slots)';
-        setGpuStatus("🧹 Cache riwayat dibersihkan untuk stabilitas GPU.");
-        if (typeof window.__vtfOnGpuSettingsUpdated === 'function') {
-            window.__vtfOnGpuSettingsUpdated(getInfo());
+        if (window.VtfGpuContextRecovery && typeof window.VtfGpuContextRecovery.trimGpuMemoryCache === 'function') {
+            return window.VtfGpuContextRecovery.trimGpuMemoryCache(currentSettings);
         }
-    }
-
-    function bindContextEvents() {
-        if (listenersBound) return;
-        const pcApp = getPcAppSafe();
-        const canvas = document.getElementById('gl') || (pcApp && pcApp.graphicsDevice && pcApp.graphicsDevice.canvas);
-        if (!canvas) return;
-        listenersBound = true;
-
-        canvas.addEventListener('webglcontextlost', function (e) {
-            contextLostCount += 1;
-            lastGpuEvent = 'Context Lost #' + contextLostCount;
-            logGpu("⚠ WebGL context lost #" + contextLostCount);
-            if (!currentSettings.autoRecoverContext) return;
-            e.preventDefault();
-            setGpuStatus("⚠ GPU context terputus — mencoba stabilisasi & pemulihan...");
-            try {
-                if (Array.isArray(window.undoStack) && window.undoStack.length > 3) {
-                    window.undoStack.splice(0, window.undoStack.length - 3);
-                }
-            } catch (err) {}
-        }, false);
-
-        canvas.addEventListener('webglcontextrestored', function () {
-            lastGpuEvent = 'Context Restored';
-            logGpu("✅ WebGL context restored");
-            applySettings(null, false);
-            setGpuStatus("✅ GPU context pulih.");
-        }, false);
-    }
-
-    function detectRendererInfo() {
-        const pcApp = getPcAppSafe();
-        const gd = pcApp ? pcApp.graphicsDevice : null;
-        const gl = gd && gd.gl ? gd.gl : null;
-        let rendererName = 'WebGL';
-        if (gl && typeof gl.getParameter === 'function') {
-            try {
-                const dbgInfo = gl.getExtension('WEBGL_debug_renderer_info');
-                if (dbgInfo) {
-                    rendererName = gl.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL) || rendererName;
-                } else {
-                    rendererName = gl.getParameter(gl.RENDERER) || rendererName;
-                }
-            } catch (e) {}
-        }
-        const activePrecision = (gd && gd.precision) ? String(gd.precision) : currentSettings.precision;
-        return {
-            renderer: String(rendererName),
-            maxPixelRatio: gd ? gd.maxPixelRatio : currentSettings.maxPixelRatio,
-            precision: activePrecision,
-            precisionNeedsReload: activePrecision !== currentSettings.precision,
-            contextLostCount: contextLostCount,
-            lastGpuEvent: lastGpuEvent
-        };
+        return 0;
     }
 
     function getInfo() {
+        const dev = window.VtfGpuContextRecovery
+            ? window.VtfGpuContextRecovery.detectDeviceInfo(currentSettings)
+            : { renderer: 'WebGL', contextLostCount: 0, lastGpuEvent: 'Normal' };
         return {
             settings: Object.assign({}, currentSettings),
-            presets: Object.keys(PRESETS),
-            presetLabels: {
-                balanced: PRESETS.balanced.label,
-                stability: PRESETS.stability.label,
-                quality: PRESETS.quality.label
-            },
-            device: detectRendererInfo()
+            device: Object.assign({}, dev)
         };
     }
 
-    loadSavedSettings();
-
-    let attempts = 0;
-    let lightsApplied = false;
-    const initTimer = setInterval(function () {
-        attempts += 1;
-        bindContextEvents();
-        const pcApp = getPcAppSafe();
-        if (pcApp && pcApp.root && !lightsApplied) {
-            lightsApplied = true;
-            applySettings(null, false);
-        }
-        if ((listenersBound && lightsApplied) || attempts >= 150) {
-            clearInterval(initTimer);
-        }
-    }, 100);
-
     window.GpuStability = {
-        getInfo: getInfo,
-        applySettings: applySettings,
+        PRESETS: PRESETS,
         applyPreset: applyPreset,
-        trimGpuMemoryCache: trimGpuMemoryCache
+        applySettings: applySettings,
+        applyToScene: applyToScene,
+        trimGpuMemoryCache: trimGpuMemoryCache,
+        getInfo: getInfo
     };
 
-    logGpu("✅ gpu_stability.js loaded");
+    loadSavedSettings();
+
+    function trySyncInitial() {
+        if (!getAppSafe()) return false;
+        applyToScene();
+        return true;
+    }
+
+    if (!trySyncInitial()) {
+        let tries = 0;
+        const t = setInterval(function () {
+            tries++;
+            if (trySyncInitial() || tries > 120) clearInterval(t);
+        }, 100);
+    }
 })();
