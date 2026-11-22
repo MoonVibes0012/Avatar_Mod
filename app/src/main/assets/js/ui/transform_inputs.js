@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/ui/transform_inputs.js ===== */
-// Binding input transformasi (posisi, rotasi, skala), grid snap, dan properti material
+// Binding input transformasi (posisi, rotasi, skala) & grid snap
 
 (function () {
     'use strict';
@@ -23,19 +23,18 @@
         return null;
     }
 
-    function snapVal(v) {
-        return snapEnabled ? Math.round(v * 2) / 2 : v;
+    function commitHistorySafe() {
+        if (typeof window.saveState === 'function') {
+            try { window.saveState(); } catch (e) {}
+            return;
+        }
+        try {
+            if (typeof saveState === 'function') saveState();
+        } catch (e) {}
     }
 
-    function parseHexToRgb01(hex) {
-        if (typeof hex !== 'string') return null;
-        const clean = hex.trim();
-        if (!/^#[0-9a-fA-F]{6}$/.test(clean)) return null;
-        return {
-            r: parseInt(clean.slice(1, 3), 16) / 255,
-            g: parseInt(clean.slice(3, 5), 16) / 255,
-            b: parseInt(clean.slice(5, 7), 16) / 255
-        };
+    function snapVal(v) {
+        return snapEnabled ? Math.round(v * 2) / 2 : v;
     }
 
     function bindNumericSlider(id, outId, fn, sliderId, sMin, sMax, decimals) {
@@ -65,7 +64,7 @@
             apply(snapVal(raw), false);
         };
         numEl.onchange = () => {
-            if (getSelectedTarget() && typeof saveState === 'function') saveState();
+            if (getSelectedTarget()) commitHistorySafe();
         };
 
         const slEl = sliderId ? byId(sliderId) : null;
@@ -75,27 +74,13 @@
                 apply(snapVal(v), true);
             };
             slEl.onchange = () => {
-                if (getSelectedTarget() && typeof saveState === 'function') saveState();
+                if (getSelectedTarget()) commitHistorySafe();
             };
         }
     }
 
-    function forEachSelectedMaterial(callback) {
-        const target = getSelectedTarget();
-        if (!target || typeof target.findComponents !== 'function') return;
-        target.findComponents('render').forEach(comp => {
-            if (!comp || !comp.meshInstances) return;
-            comp.meshInstances.forEach(mi => {
-                if (mi && mi.material) {
-                    const mats = Array.isArray(mi.material) ? mi.material : [mi.material];
-                    mats.forEach(m => { if (m) callback(m); });
-                }
-            });
-        });
-    }
-
     function bindAllTransformInputs() {
-        document.querySelectorAll('input').forEach(inp => {
+        document.querySelectorAll('input').forEach((inp) => {
             if (inp.dataset.vtfEnterBound === '1') return;
             inp.dataset.vtfEnterBound = '1';
             const inputType = (inp.getAttribute('type') || 'text').toLowerCase();
@@ -116,15 +101,6 @@
                 snapEnabled = !snapEnabled;
                 snapToggleBtn.classList.toggle('on', snapEnabled);
                 setTransformStatus(snapEnabled ? 'Grid Snap: ON (0.5 unit)' : 'Grid Snap: OFF');
-            };
-        }
-
-        const texScaleEl = byId('texScale');
-        if (texScaleEl && texScaleEl.dataset.vtfBound !== '1') {
-            texScaleEl.dataset.vtfBound = '1';
-            texScaleEl.oninput = (e) => {
-                const out = byId('texScaleOut');
-                if (out) out.textContent = e.target.value;
             };
         }
 
@@ -179,70 +155,18 @@
                 applyScale(raw, false);
             };
             scEl.onchange = () => {
-                if (getSelectedTarget() && typeof saveState === 'function') saveState();
+                if (getSelectedTarget()) commitHistorySafe();
             };
             if (scREl) {
                 scREl.oninput = () => applyScale(parseFloat(scREl.value), true);
                 scREl.onchange = () => {
-                    if (getSelectedTarget() && typeof saveState === 'function') saveState();
+                    if (getSelectedTarget()) commitHistorySafe();
                 };
             }
         }
 
-        const colorEl = byId('color');
-        if (colorEl && colorEl.dataset.vtfBound !== '1') {
-            colorEl.dataset.vtfBound = '1';
-            colorEl.oninput = (e) => {
-                const rgb = parseHexToRgb01(e.target.value);
-                if (!rgb) return;
-                forEachSelectedMaterial(m => {
-                    m.diffuse = new pc.Color(rgb.r, rgb.g, rgb.b);
-                });
-            };
-            colorEl.onchange = () => {
-                forEachSelectedMaterial(m => {
-                    if (typeof m.update === 'function') m.update();
-                });
-                if (typeof saveState === 'function') saveState();
-            };
-        }
-
-        const roughEl = byId('rough');
-        if (roughEl && roughEl.dataset.vtfBound !== '1') {
-            roughEl.dataset.vtfBound = '1';
-            roughEl.oninput = (e) => {
-                const v = parseFloat(e.target.value);
-                const out = byId('rougho');
-                if (out && !isNaN(v)) out.textContent = v.toFixed(2);
-                if (!isNaN(v)) {
-                    forEachSelectedMaterial(m => {
-                        m.gloss = v;
-                        if (typeof m.update === 'function') m.update();
-                    });
-                }
-            };
-            roughEl.onchange = () => {
-                if (typeof saveState === 'function') saveState();
-            };
-        }
-
-        const metalEl = byId('metal');
-        if (metalEl && metalEl.dataset.vtfBound !== '1') {
-            metalEl.dataset.vtfBound = '1';
-            metalEl.oninput = (e) => {
-                const v = parseFloat(e.target.value);
-                const out = byId('meto');
-                if (out && !isNaN(v)) out.textContent = v.toFixed(2);
-                if (!isNaN(v)) {
-                    forEachSelectedMaterial(m => {
-                        m.metalness = v;
-                        if (typeof m.update === 'function') m.update();
-                    });
-                }
-            };
-            metalEl.onchange = () => {
-                if (typeof saveState === 'function') saveState();
-            };
+        if (typeof window.__vtfBindMaterialInputs === 'function') {
+            window.__vtfBindMaterialInputs();
         }
     }
 
