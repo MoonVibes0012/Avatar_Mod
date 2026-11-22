@@ -12,14 +12,6 @@
         }
     }
 
-    function getPcAppSafe() {
-        if (typeof window.getPcApp === 'function') {
-            const a = window.getPcApp();
-            if (a) return a;
-        }
-        return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
-    }
-
     function captureRestTransform(entity) {
         if (!entity) return null;
         const pos = entity.getLocalPosition();
@@ -53,6 +45,8 @@
                     if (!aabb) continue;
                     const bMin = aabb.getMin();
                     const bMax = aabb.getMax();
+                    if (!isFinite(bMin.x) || !isFinite(bMin.y) || !isFinite(bMin.z)) continue;
+                    if (!isFinite(bMax.x) || !isFinite(bMax.y) || !isFinite(bMax.z)) continue;
                     min.min(bMin);
                     max.max(bMax);
                     found = true;
@@ -61,7 +55,9 @@
         }
 
         if (!found) {
-            const p = rootEntity ? rootEntity.getPosition() : new pc.Vec3(0, 0, 0);
+            const p = (rootEntity && typeof rootEntity.getPosition === 'function')
+                ? rootEntity.getPosition()
+                : new pc.Vec3(0, 0, 0);
             min.set(p.x - 0.35, p.y, p.z - 0.25);
             max.set(p.x + 0.35, p.y + 1.6, p.z + 0.25);
         }
@@ -85,10 +81,24 @@
         for (let i = 0; i < record.fallbackPivots.length; i++) {
             const p = record.fallbackPivots[i];
             try {
-                if (p && p.destroy) p.destroy();
+                if (p && p.parent) p.parent.removeChild(p);
+                if (p && typeof p.destroy === 'function') p.destroy();
             } catch (e) {}
         }
         record.fallbackPivots.length = 0;
+    }
+
+    function setLocalPositionRelativeToRoot(pivot, rootEntity, wx, wy, wz) {
+        if (!pivot) return;
+        if (rootEntity && typeof rootEntity.getWorldTransform === 'function') {
+            try {
+                const invWorld = rootEntity.getWorldTransform().clone().invert();
+                const localPos = invWorld.transformPoint(new pc.Vec3(wx, wy, wz));
+                pivot.setLocalPosition(localPos.x, localPos.y, localPos.z);
+                return;
+            } catch (e) {}
+        }
+        pivot.setPosition(wx, wy, wz);
     }
 
     function extractModelAnatomy(rootEntity, forceRefresh) {
@@ -126,6 +136,8 @@
 
         traverseHierarchy(rootEntity, function (node) {
             if (node === rootEntity) return;
+            if (typeof node.name === 'string' && node.name.indexOf('vtf_anatomy_pivot_') === 0) return;
+
             const name = node.name || '';
             const partId = window.AnatomyRegistry.matchPartByName(name);
             const isBone = boneSet.has(node);
@@ -174,7 +186,7 @@
                 const wz = bounds.center.z + (def.fallbackRatio[2] * width);
 
                 rootEntity.addChild(pivot);
-                pivot.setPosition(wx, wy, wz);
+                setLocalPositionRelativeToRoot(pivot, rootEntity, wx, wy, wz);
                 fallbackPivots.push(pivot);
 
                 parts[partId] = {
