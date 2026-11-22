@@ -55,10 +55,21 @@
         } catch (e) {}
     }
 
+    function commitHistoryIfAvailable() {
+        if (typeof window.saveState === 'function') {
+            try { window.saveState(); } catch (e) {}
+            return;
+        }
+        try {
+            if (typeof saveState === 'function') saveState();
+        } catch (e) {}
+    }
+
     function applyPoseByName(name) {
         if (!window.AnatomySolver) return false;
         if (name === 'rest') {
             window.AnatomySolver.resetAllParts();
+            commitHistoryIfAvailable();
             return true;
         }
         const custom = loadCustomPoses();
@@ -67,6 +78,7 @@
 
         window.AnatomySolver.resetAllParts();
         window.AnatomySolver.importPoseSnapshot(preset.parts);
+        commitHistoryIfAvailable();
         return true;
     }
 
