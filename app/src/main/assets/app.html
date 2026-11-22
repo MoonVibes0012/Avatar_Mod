@@ -1,140 +1,108 @@
-<!doctype html>
-<html lang="id" dir="ltr">
+<!DOCTYPE html>
+<html lang="id">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
     <title>VTuber Forge</title>
-    <link rel="stylesheet" href="css/style.css" onerror="window.__vtfStyleFailed=true">
-    <script src="js/playcanvas.min.js" onerror="window.__vtfPcFailed=true"></script>
-    <script src="js/face_mesh.js" onerror="window.__vtfFmFailed=true"></script>
-    <script src="js/kalidokit.umd.js" onerror="window.__vtfKkFailed=true"></script>
+    <link rel="stylesheet" href="css/style.css" onerror="window.__vtfStyleFailed=true;">
 </head>
 <body>
+    <canvas id="gl"></canvas>
 
-<noscript>
-    <div class="noscript-banner">
-        JavaScript wajib aktif untuk VTuber Forge.
+    <div id="loadingOverlay" aria-live="polite" style="display:none">
+        <div class="loading-box">
+            <div class="loading-spinner"></div>
+            <div id="loadingText">Memuat VTuber Forge...</div>
+        </div>
     </div>
-</noscript>
 
-<div id="loadingOverlay" role="status" aria-live="polite">
-    <div class="spinner"></div>
-    <div id="loadingText">Memproses Model...</div>
-</div>
-
-<div class="app">
     <div class="top">
-        <div class="brand">VTuber Forge</div>
-        <span class="badge">v0.1</span>
-        <button type="button" id="parts" class="top-btn" data-panel="left" aria-expanded="false" aria-controls="left" aria-label="Menu">☰</button>
-        <button type="button" id="inspector" class="top-btn" data-panel="right" aria-expanded="false" aria-controls="right" aria-label="Inspect">⚙</button>
-        <button type="button" id="btnUndo" title="Undo (Z)" aria-label="Undo">↶</button>
-        <button type="button" id="btnRedo" title="Redo (Y)" aria-label="Redo">↷</button>
-        <button type="button" id="btnSave" title="Save Scene" aria-label="Save Scene">💾</button>
-        <button type="button" id="btnImport" title="Import GLB/VRM" aria-label="Import Model">📥</button>
-        <button type="button" id="btnScreenshot" title="Screenshot" aria-label="Screenshot">📸</button>
-        <button type="button" id="btnFaceTrack" title="Face Tracking" aria-label="Face Tracking">📷</button>
-        <button type="button" id="btnCharDriver" title="Character Driver" aria-label="Character Driver">🎭</button>
-        <button type="button" id="btnGpuSettings" title="Pengaturan GPU" aria-label="Pengaturan GPU">🎮</button>
-        <button type="button" id="btnDebug" title="Toggle Debug Log" aria-label="Debug Log">🐛</button>
+        <button id="parts" type="button" aria-label="Buka panel menu">☰ MENU</button>
+        <button id="btnUndo" type="button" title="Undo (Ctrl+Z)">↶</button>
+        <button id="btnRedo" type="button" title="Redo (Ctrl+Y)">↷</button>
+        <button id="btnNew" type="button" title="Scene Baru">📄</button>
+        <button id="btnSave" type="button" title="Simpan Scene JSON">💾</button>
+        <button id="btnImport" type="button" title="Import Model / Tekstur">📁</button>
+        <button id="btnScreenshot" type="button" title="Screenshot PNG">📸</button>
+        <button id="btnGpuSettings" type="button" title="Pengaturan GPU">🎮</button>
+        <button id="btnDebug" type="button" title="Toggle Debug Log">🐞</button>
+        <button id="inspector" type="button" aria-label="Buka panel inspeksi">INSPECT ⚙</button>
     </div>
 
-    <div class="work">
-        <button type="button" id="panelBackdrop" hidden aria-label="Tutup panel"></button>
+    <div id="panelBackdrop" class="panel-backdrop" hidden></div>
 
-        <div class="panel" id="left" role="dialog" aria-label="Menu">
-            <div class="panel-header">
-                <h3>☰ MENU</h3>
-                <button type="button" class="btn-close-panel" data-panel="left" aria-label="Tutup menu">✕ Tutup</button>
-            </div>
-            <div id="leftBody"></div>
+    <aside class="panel left" id="left" aria-label="Panel Menu">
+        <div class="panel-header">
+            <span class="panel-title">MENU</span>
+            <button type="button" class="btn-close-panel" data-panel="left" aria-label="Tutup Menu">✕</button>
         </div>
+        <div class="panel-body" id="leftBody"></div>
+    </aside>
 
-        <div class="viewport">
-            <canvas id="gl"></canvas>
-            <div class="hud">
-                <span id="sel">Nothing selected</span>
-                <span id="mode">OBJECT</span>
-            </div>
+    <aside class="panel right" id="right" aria-label="Panel Inspeksi">
+        <div class="panel-header">
+            <span class="panel-title">INSPECT</span>
+            <button type="button" class="btn-close-panel" data-panel="right" aria-label="Tutup Inspeksi">✕</button>
         </div>
+        <div class="panel-body" id="rightBody"></div>
+    </aside>
 
-        <div class="panel" id="right" role="dialog" aria-label="Inspect">
-            <div class="panel-header">
-                <h3>⚙ INSPECT</h3>
-                <button type="button" class="btn-close-panel" data-panel="right" aria-label="Tutup inspect">✕ Tutup</button>
-            </div>
-            <div id="rightBody"></div>
-        </div>
-    </div>
+    <div id="status">Siap!</div>
+    <div id="debugOverlay" style="display:none"></div>
+    <input type="file" id="file" accept=".glb,.gltf,.vrm,.obj,.fbx,.dds,image/vnd-ms.dds" hidden>
+    <input type="file" id="jsonFile" accept=".json" hidden>
 
-    <div class="status">
-        <span id="status">Viewport aktif. Import GLB/VRM atau tambah object.</span>
-        <span class="status-actions">
-            <button type="button" id="saveLogBtn" class="save-log-btn">Save Log</button>
-        </span>
-    </div>
+    <!-- PlayCanvas + MediaPipe + Kalidokit Lokal -->
+    <script src="js/playcanvas.min.js"></script>
+    <script src="js/face_mesh.js"></script>
+    <script src="js/kalidokit.umd.js"></script>
 
-    <input id="file" class="hidden-file-input" type="file" accept=".glb,.vrm,.gltf,application/octet-stream,model/gltf-binary,model/gltf+json,*/*" />
-    <input id="jsonFile" class="hidden-file-input" type="file" accept=".json,application/json,text/plain,*/*" />
-</div>
+    <!-- Core -->
+    <script src="js/core/state.js"></script>
+    <script src="js/core/utils.js"></script>
+    <script src="js/core/init.js"></script>
+    <script src="js/core/gpu_stability.js"></script>
+    <script src="js/core/debug.js"></script>
 
-<div id="debugOverlay"></div>
+    <!-- Camera & Controls -->
+    <script src="js/camera/controls.js"></script>
 
-<!-- Core -->
-<script src="js/core/config.js"></script>
-<script src="js/core/debug.js"></script>
-<script src="js/core/init.js"></script>
-<script src="js/core/gpu_stability.js"></script>
+    <!-- Entities & Editing -->
+    <script src="js/entities/create.js"></script>
+    <script src="js/entities/bone.js"></script>
+    <script src="js/editing/select.js"></script>
+    <script src="js/editing/operations.js"></script>
+    <script src="js/editing/split.js"></script>
 
-<!-- Panels template (harus di-load sebelum UI & entities) -->
-<script src="js/ui/panels_template.js"></script>
+    <!-- Animation & Scene -->
+    <script src="js/animation/character_driver.js"></script>
+    <script src="js/scene/serialize.js"></script>
+    <script src="js/scene/history.js"></script>
+    <script src="js/scene/save_load.js"></script>
 
-<!-- Camera -->
-<script src="js/camera/controls.js"></script>
+    <!-- IO & Face Tracking -->
+    <script src="js/io/dds_loader.js"></script>
+    <script src="js/io/import.js"></script>
+    <script src="js/io/export.js"></script>
+    <script src="js/io/vrm_exporter.js"></script>
+    <script src="js/tracking/face.js"></script>
 
-<!-- Entities -->
-<script src="js/entities/create.js"></script>
-<script src="js/entities/select.js"></script>
-<script src="js/entities/operations.js"></script>
-<script src="js/entities/split.js"></script>
+    <!-- Gerak Anatomi VRM (Kotak Kecil -> Bola Penanda -> Geser Bagian) -->
+    <script src="js/anatomy/anatomy_registry.js"></script>
+    <script src="js/anatomy/vrm_part_extractor.js"></script>
+    <script src="js/anatomy/anchor_boxes.js"></script>
+    <script src="js/anatomy/selection_sphere.js"></script>
+    <script src="js/anatomy/anatomy_solver.js"></script>
+    <script src="js/anatomy/anatomy_poses.js"></script>
+    <script src="js/anatomy/anatomy_bridge_ui.js"></script>
+    <script src="js/anatomy/anatomy_touch_hud.js"></script>
 
-<!-- Editing -->
-<script src="js/editing/vertex.js"></script>
-<script src="js/editing/smooth.js"></script>
-<script src="js/editing/bone.js"></script>
-
-<!-- Animation -->
-<script src="js/animation/character_driver.js"></script>
-
-<!-- Scene & I/O -->
-<script src="js/scene/serialize.js"></script>
-<script src="js/io/import.js"></script>
-<script src="js/io/export.js"></script>
-<script src="js/io/vrm_exporter.js"></script>
-<script src="js/io/history.js"></script>
-<script src="js/io/save_load.js"></script>
-
-<!-- Face Tracking -->
-<script src="js/tracking/face.js"></script>
-
-<!-- Anatomy (10 modul) -->
-<script src="js/anatomy/anatomy_registry.js"></script>
-<script src="js/anatomy/vrm_part_extractor.js"></script>
-<script src="js/anatomy/anchor_boxes.js"></script>
-<script src="js/anatomy/selection_sphere.js"></script>
-<script src="js/anatomy/anatomy_solver.js"></script>
-<script src="js/anatomy/anatomy_bridge_ui.js"></script>
-<script src="js/anatomy/anatomy_poses.js"></script>
-<script src="js/anatomy/anatomy_expression_link.js"></script>
-<script src="js/anatomy/anatomy_touch_hud.js"></script>
-<script src="js/anatomy/anatomy_diagnostics.js"></script>
-
-<!-- UI -->
-<script src="js/ui/expressions.js"></script>
-<script src="js/ui/transform_inputs.js"></script>
-<script src="js/ui/toolbar.js"></script>
-<script src="js/ui/gpu_settings_ui.js"></script>
-<script src="js/ui/boot.js"></script>
-
+    <!-- UI -->
+    <script src="js/ui/panels_template.js"></script>
+    <script src="js/ui/expressions.js"></script>
+    <script src="js/ui/transform_inputs.js"></script>
+    <script src="js/ui/toolbar.js"></script>
+    <script src="js/ui/gpu_settings_ui.js"></script>
+    <script src="js/ui/boot.js"></script>
 </body>
 </html>
