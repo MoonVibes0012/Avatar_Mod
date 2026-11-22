@@ -12,16 +12,12 @@
     let pendingTargetPos = null;
     let frameTimer = null;
 
-    function getPcAppSafe() {
-        if (typeof window.getPcApp === 'function') {
-            const a = window.getPcApp();
-            if (a) return a;
-        }
-        return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
-    }
-
     function isFaceTrackingActive() {
-        return !!(window.__vtfFaceTrackingActive || window.faceTrackingRunning);
+        if (window.__vtfFaceTrackingActive || window.faceTrackingRunning) return true;
+        if (window.FaceTracking && typeof window.FaceTracking.isActive === 'function') {
+            try { return !!window.FaceTracking.isActive(); } catch (e) {}
+        }
+        return false;
     }
 
     function setRecord(record) {
@@ -29,6 +25,10 @@
         selectedPartId = null;
         pendingTargetEuler = null;
         pendingTargetPos = null;
+        if (frameTimer !== null) {
+            cancelAnimationFrame(frameTimer);
+            frameTimer = null;
+        }
         if (window.AnatomyAnchorBoxes) {
             window.AnatomyAnchorBoxes.setTargetRecord(currentRecord);
         }
@@ -40,6 +40,8 @@
     function selectPart(partId) {
         if (!currentRecord || !currentRecord.parts || !currentRecord.parts[partId]) {
             selectedPartId = null;
+            pendingTargetEuler = null;
+            pendingTargetPos = null;
             if (window.AnatomySelectionSphere) {
                 window.AnatomySelectionSphere.clearSelection();
             }
@@ -50,8 +52,10 @@
         pendingTargetEuler = partObj.offsetEuler.clone();
         pendingTargetPos = partObj.offsetPos.clone();
 
-        const wPos = partObj.entity.getPosition();
-        if (window.AnatomySelectionSphere) {
+        const wPos = (partObj.entity && typeof partObj.entity.getPosition === 'function')
+            ? partObj.entity.getPosition()
+            : null;
+        if (wPos && window.AnatomySelectionSphere) {
             window.AnatomySelectionSphere.selectPart(partId, wPos, currentRecord.modelScale);
         }
         if (window.AnatomyAnchorBoxes) {
@@ -74,28 +78,35 @@
         partEntry.offsetPos.z = Math.max(-maxPos, Math.min(maxPos, partEntry.offsetPos.z));
 
         const r = partEntry.rest;
+        const rotScale = (isFaceTrackingActive() && (partId === 'head' || partId === 'neck')) ? 0.5 : 1.0;
+
         if (partEntry.isFallback && partEntry.targetEntity && partEntry.rootRest) {
-            // Untuk model non-rigged: gerakkan root entity secara halus & geser pivot sebagai penanda
-            partEntry.targetEntity.setLocalEulerAngles(
-                r.rot[0] + partEntry.offsetEuler.x * 0.45,
-                r.rot[1] + partEntry.offsetEuler.y * 0.45,
-                r.rot[2] + partEntry.offsetEuler.z * 0.45
-            );
-            partEntry.entity.setLocalPosition(
-                r.pos[0] + partEntry.offsetPos.x,
-                r.pos[1] + partEntry.offsetPos.y,
-                r.pos[2] + partEntry.offsetPos.z
-            );
+            if (typeof partEntry.targetEntity.setLocalEulerAngles === 'function') {
+                partEntry.targetEntity.setLocalEulerAngles(
+                    r.rot[0] + partEntry.offsetEuler.x * 0.45 * rotScale,
+                    r.rot[1] + partEntry.offsetEuler.y * 0.45 * rotScale,
+                    r.rot[2] + partEntry.offsetEuler.z * 0.45 * rotScale
+                );
+            }
+            if (typeof partEntry.entity.setLocalPosition === 'function') {
+                partEntry.entity.setLocalPosition(
+                    r.pos[0] + partEntry.offsetPos.x,
+                    r.pos[1] + partEntry.offsetPos.y,
+                    r.pos[2] + partEntry.offsetPos.z
+                );
+            }
             return;
         }
 
-        partEntry.entity.setLocalEulerAngles(
-            r.rot[0] + partEntry.offsetEuler.x,
-            r.rot[1] + partEntry.offsetEuler.y,
-            r.rot[2] + partEntry.offsetEuler.z
-        );
+        if (typeof partEntry.entity.setLocalEulerAngles === 'function') {
+            partEntry.entity.setLocalEulerAngles(
+                r.rot[0] + partEntry.offsetEuler.x * rotScale,
+                r.rot[1] + partEntry.offsetEuler.y * rotScale,
+                r.rot[2] + partEntry.offsetEuler.z * rotScale
+            );
+        }
 
-        if (def && def.mode === 'hybrid') {
+        if (def && def.mode === 'hybrid' && typeof partEntry.entity.setLocalPosition === 'function') {
             partEntry.entity.setLocalPosition(
                 r.pos[0] + partEntry.offsetPos.x,
                 r.pos[1] + partEntry.offsetPos.y,
@@ -125,7 +136,7 @@
     }
 
     function stepSmoothing() {
-        if (!currentRecord || !selectedPartId || !currentRecord.parts[selectedPartId]) {
+        if (!currentRecord || !selectedPartId || !currentRecord.parts || !currentRecord.parts[selectedPartId]) {
             frameTimer = null;
             return;
         }
@@ -143,16 +154,13 @@
             entry.offsetPos.z += (pendingTargetPos.z - entry.offsetPos.z) * alpha;
         }
 
-        // Jika face tracking aktif di kepala/leher, biarkan override manual tetap lembut tanpa bentrok keras
-        if (isFaceTrackingActive() && (selectedPartId === 'head' || selectedPartId === 'neck')) {
-            entry.offsetEuler.mulScalar(0.85);
-        }
-
         applyPoseToPartEntry(selectedPartId, entry);
         applyMirrorSymmetry(selectedPartId, entry);
 
-        const wPos = entry.entity.getPosition();
-        if (window.AnatomySelectionSphere) {
+        const wPos = (entry.entity && typeof entry.entity.getPosition === 'function')
+            ? entry.entity.getPosition()
+            : null;
+        if (wPos && window.AnatomySelectionSphere) {
             window.AnatomySelectionSphere.updateWorldPosition(wPos, currentRecord.modelScale);
         }
         if (window.AnatomyAnchorBoxes) {
@@ -217,7 +225,7 @@
             }
         }
 
-        if (!frameTimer) {
+        if (frameTimer === null) {
             frameTimer = requestAnimationFrame(stepSmoothing);
         }
     }
@@ -229,16 +237,12 @@
         if (entry) {
             pendingTargetEuler = entry.offsetEuler.clone();
             pendingTargetPos = entry.offsetPos.clone();
-            if (window.AnatomySelectionSphere) {
+            if (window.AnatomySelectionSphere && entry.entity && typeof entry.entity.getPosition === 'function') {
                 window.AnatomySelectionSphere.updateWorldPosition(entry.entity.getPosition(), currentRecord.modelScale);
             }
         }
         if (window.AnatomyAnchorBoxes) {
             window.AnatomyAnchorBoxes.syncBoxes(true);
-        }
-        const pcApp = getPcAppSafe();
-        if (pcApp && typeof pcApp.render === 'function') {
-            // Render loop PlayCanvas otomatis memperbarui frame
         }
     }
 
@@ -249,7 +253,7 @@
             const entry = currentRecord.parts[selectedPartId];
             pendingTargetEuler = entry.offsetEuler.clone();
             pendingTargetPos = entry.offsetPos.clone();
-            if (window.AnatomySelectionSphere) {
+            if (window.AnatomySelectionSphere && entry.entity && typeof entry.entity.getPosition === 'function') {
                 window.AnatomySelectionSphere.updateWorldPosition(entry.entity.getPosition(), currentRecord.modelScale);
             }
         }
@@ -293,7 +297,7 @@
             const selP = currentRecord.parts[selectedPartId];
             pendingTargetEuler = selP.offsetEuler.clone();
             pendingTargetPos = selP.offsetPos.clone();
-            if (window.AnatomySelectionSphere) {
+            if (window.AnatomySelectionSphere && selP.entity && typeof selP.entity.getPosition === 'function') {
                 window.AnatomySelectionSphere.updateWorldPosition(selP.entity.getPosition(), currentRecord.modelScale);
             }
         }
