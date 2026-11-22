@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/anatomy/anatomy_bridge_ui.js ===== */
-// Integrasi kontrol Anatomi ke panel UI, undo/redo saat drag selesai, reset pose, & lifecycle GPU
+// Integrasi kontrol Anatomi ke panel UI, undo/redo saat drag selesai, reset pose, & sinkronisasi seleksi
 
 (function () {
     'use strict';
@@ -14,6 +14,16 @@
     function setAnatomyStatus(msg) {
         const el = byId('status');
         if (el) el.textContent = msg;
+    }
+
+    function commitHistorySafe() {
+        if (typeof window.saveState === 'function') {
+            try { window.saveState(); } catch (e) {}
+            return;
+        }
+        try {
+            if (typeof saveState === 'function') saveState();
+        } catch (e) {}
     }
 
     function getCurrentModelEntity() {
@@ -228,7 +238,7 @@
             rpBtn.onclick = function () {
                 if (!window.AnatomySolver) return;
                 window.AnatomySolver.resetSelectedPart();
-                if (typeof saveState === 'function') saveState();
+                commitHistorySafe();
                 setAnatomyStatus('↩ Pose bagian terpilih di-reset.');
             };
         }
@@ -239,9 +249,27 @@
             raBtn.onclick = function () {
                 if (!window.AnatomySolver) return;
                 window.AnatomySolver.resetAllParts();
-                if (typeof saveState === 'function') saveState();
+                commitHistorySafe();
                 setAnatomyStatus('↩ Semua pose anatomi di-reset ke Rest Pose.');
             };
+        }
+    }
+
+    function handleSelectionChanged() {
+        ensureAnatomySectionInPanel();
+        const cur = getCurrentModelEntity();
+        if (cur !== lastWatchedRoot) {
+            const rec = refreshModelAnatomy(false);
+            if (anatomyActive) {
+                if (rec && window.AnatomyAnchorBoxes) {
+                    window.AnatomyAnchorBoxes.setTargetRecord(rec);
+                    window.AnatomyAnchorBoxes.syncBoxes(true);
+                } else {
+                    setAnatomyEnabled(false);
+                }
+            }
+        } else if (anatomyActive && window.AnatomyAnchorBoxes) {
+            window.AnatomyAnchorBoxes.syncBoxes(false);
         }
     }
 
@@ -277,44 +305,36 @@
     };
 
     window.__vtfOnAnatomyDragEnd = function (partId) {
-        if (typeof saveState === 'function') {
-            try { saveState(); } catch (e) {}
-        }
+        commitHistorySafe();
         const def = window.AnatomyRegistry ? window.AnatomyRegistry.getPartDef(partId) : null;
         setAnatomyStatus('✅ Pose diperbarui: ' + ((def && def.label) ? def.label : partId));
     };
 
-    // Pantau perubahan seleksi objek / render panel
+    window.__vtfOnAnatomySelectionChanged = handleSelectionChanged;
+
+    // Pantau perubahan seleksi objek / render panel tanpa polling berulang
     const origRenderPanels = window.renderPanelsTemplates;
-    if (typeof origRenderPanels === 'function') {
-        window.renderPanelsTemplates = function () {
+    if (typeof origRenderPanels === 'function' && !origRenderPanels.__vtfWrappedByAnatomy) {
+        const wrappedRenderPanels = function () {
             const res = origRenderPanels.apply(this, arguments);
             ensureAnatomySectionInPanel();
             return res;
         };
+        wrappedRenderPanels.__vtfWrappedByAnatomy = true;
+        window.renderPanelsTemplates = wrappedRenderPanels;
     }
 
-    setInterval(function () {
-        ensureAnatomySectionInPanel();
-        const cur = getCurrentModelEntity();
-        if (cur !== lastWatchedRoot) {
-            const rec = refreshModelAnatomy(false);
-            if (anatomyActive) {
-                if (rec && window.AnatomyAnchorBoxes) {
-                    window.AnatomyAnchorBoxes.setTargetRecord(rec);
-                    window.AnatomyAnchorBoxes.syncBoxes(true);
-                } else {
-                    setAnatomyEnabled(false);
-                }
-            }
-        } else if (anatomyActive && window.AnatomyAnchorBoxes) {
-            window.AnatomyAnchorBoxes.syncBoxes(false);
+    document.addEventListener('click', function (e) {
+        if (!e || !e.target || typeof e.target.closest !== 'function') return;
+        if (e.target.closest('#tree, [data-add], #importMenu, #btnImport, #loadSceneBtn, #btnNew, #del')) {
+            setTimeout(handleSelectionChanged, 0);
         }
-    }, 250);
+    });
 
     window.AnatomyBridgeUI = {
         setEnabled: setAnatomyEnabled,
-        refresh: function () { return refreshModelAnatomy(true); }
+        refresh: function () { return refreshModelAnatomy(true); },
+        notifySelectionChanged: handleSelectionChanged
     };
 
     if (document.readyState !== 'loading') {
