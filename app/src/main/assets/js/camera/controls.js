@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
-/* FULL REPLACE — Kamera orbit + delegasi ke helper panel tunggal agar tidak double-toggle. */
+// Kamera orbit + lock saat drag anatomi + delegasi ke helper panel tunggal
 
 (function () {
 'use strict';
@@ -17,6 +17,12 @@ function getApp() {
 function log(msg) {
     if (typeof window.dbg === 'function') { try { window.dbg(msg); } catch (e) {} }
     else if (typeof console !== 'undefined') { console.log(msg); }
+}
+
+function isAnatomyDragLocked(ctrl) {
+    if (window.__vtfAnatomyDragging === true) return true;
+    if (ctrl && ctrl.camera && ctrl.camera._orbitLocked === true) return true;
+    return false;
 }
 
 function setupPanels() {
@@ -99,6 +105,13 @@ var CameraControls = {
     _pinchMid: null,
     _bound: false,
 
+    clearGesture: function () {
+        this._dragging = false;
+        this._panning = false;
+        this._pinchDist = 0;
+        this._pinchMid = null;
+    },
+
     init: function (app) {
         if (!app) return false;
         if (this.camera && this.app === app) return true;
@@ -152,13 +165,21 @@ var CameraControls = {
         canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
         canvas.addEventListener('mousedown', function (e) {
-            if (!self.enabled) return;
+            if (!self.enabled || isAnatomyDragLocked(self)) {
+                self.clearGesture();
+                return;
+            }
             self._dragging = true;
             self._panning = (e.button === 2 || e.button === 1);
             self._lastX = e.clientX;
             self._lastY = e.clientY;
         });
+
         window.addEventListener('mousemove', function (e) {
+            if (isAnatomyDragLocked(self)) {
+                self.clearGesture();
+                return;
+            }
             if (!self.enabled || !self._dragging) return;
             var dx = e.clientX - self._lastX;
             var dy = e.clientY - self._lastY;
@@ -167,19 +188,23 @@ var CameraControls = {
             if (self._panning) self._pan(dx, dy);
             else self._rotate(dx, dy);
         });
+
         window.addEventListener('mouseup', function () {
             self._dragging = false;
             self._panning = false;
         });
 
         canvas.addEventListener('wheel', function (e) {
-            if (!self.enabled) return;
-            e.preventDefault();
+            if (!self.enabled || isAnatomyDragLocked(self)) return;
+            if (e.cancelable) e.preventDefault();
             self._zoom(e.deltaY * self.zoomSpeed * self.distance);
         }, { passive: false });
 
         canvas.addEventListener('touchstart', function (e) {
-            if (!self.enabled) return;
+            if (!self.enabled || isAnatomyDragLocked(self)) {
+                self.clearGesture();
+                return;
+            }
             if (e.touches.length === 1) {
                 self._dragging = true;
                 self._lastX = e.touches[0].clientX;
@@ -192,8 +217,12 @@ var CameraControls = {
         }, { passive: true });
 
         canvas.addEventListener('touchmove', function (e) {
+            if (isAnatomyDragLocked(self)) {
+                self.clearGesture();
+                return;
+            }
             if (!self.enabled) return;
-            e.preventDefault();
+            if (e.cancelable) e.preventDefault();
             if (e.touches.length === 1 && self._dragging) {
                 var dx = e.touches[0].clientX - self._lastX;
                 var dy = e.touches[0].clientY - self._lastY;
@@ -219,7 +248,18 @@ var CameraControls = {
             if (e.touches.length === 0) self._dragging = false;
         });
 
-        canvas.addEventListener('dblclick', function () { self.reset(); });
+        canvas.addEventListener('touchcancel', function () {
+            self.clearGesture();
+        });
+
+        window.addEventListener('blur', function () {
+            self.clearGesture();
+        });
+
+        canvas.addEventListener('dblclick', function () {
+            if (isAnatomyDragLocked(self)) return;
+            self.reset();
+        });
 
         window.addEventListener('resize', function () { self._resize(); });
         this._resize();
