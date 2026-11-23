@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM / .GLTF (tekstur, material PBR, node, skin, morph)
+// Loader & Builder model .GLB / .VRM / .GLTF (ekstra paranoid terhadap typed arrays)
 
 (function () {
     'use strict';
@@ -101,9 +101,9 @@
             const bytesPerComp = Ctor.BYTES_PER_ELEMENT;
             const elemBytes = bytesPerComp * numComp;
             const stride = (bv.byteStride && bv.byteStride > 0) ? bv.byteStride : elemBytes;
-            const count = Math.max(0, acc.count || 0);
+            const count = Math.max(0, Math.floor(acc.count || 0));
 
-            const result = new Ctor(Math.floor(count * numComp));
+            const result = new Ctor(count * numComp);
             if (count === 0 || off < 0) return result;
 
             const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
@@ -189,7 +189,7 @@
                     if (ibmArr && ibmArr.length >= bones.length * 16) {
                         for (let i = 0; i < bones.length; i++) {
                             const m = new pc.Mat4();
-                            m.data.set(ibmArr.subarray(i * 16, i * 16 + 16));
+                            m.data.set(new Float32Array(ibmArr.subarray(i * 16, i * 16 + 16))); // Paranoia: cast ke Float32
                             ibms.push(m);
                         }
                     } else bones.forEach(() => ibms.push(new pc.Mat4()));
@@ -211,7 +211,6 @@
                             const pos = getAcc(prim.attributes.POSITION);
                             if (!pos || pos.length < 3) return;
                             
-                            // KUNCI PERBAIKAN: Hitung jumlah vertex secara absolut
                             const numVerts = Math.floor(pos.length / 3);
                             const norm = getAcc(prim.attributes.NORMAL);
                             const uv = getAcc(prim.attributes.TEXCOORD_0);
@@ -220,26 +219,44 @@
                             const weights = getAcc(prim.attributes.WEIGHTS_0);
 
                             const mesh = new pc.Mesh(pcApp.graphicsDevice);
-                            mesh.setPositions(pos.subarray(0, numVerts * 3));
                             
+                            // 1. POSITIONS (Wajib Float32)
+                            mesh.setPositions(new Float32Array(pos.subarray(0, numVerts * 3)));
+                            
+                            // 2. NORMALS (Wajib Float32)
                             if (norm && norm.length >= numVerts * 3) {
-                                mesh.setNormals(norm.subarray(0, numVerts * 3));
+                                mesh.setNormals(new Float32Array(norm.subarray(0, numVerts * 3)));
                             } else {
                                 const defaultIdx = Array.from({ length: numVerts }, (_, k) => k);
-                                mesh.setNormals(pc.calculateNormals(pos.subarray(0, numVerts * 3), idx || defaultIdx));
+                                mesh.setNormals(pc.calculateNormals(new Float32Array(pos.subarray(0, numVerts * 3)), idx || defaultIdx));
                             }
                             
+                            // 3. UVS (Wajib Float32)
                             if (uv && uv.length >= numVerts * 2) {
-                                mesh.setUvs(0, uv.subarray(0, numVerts * 2)); // Paksa ukuran sama
+                                mesh.setUvs(0, new Float32Array(uv.subarray(0, numVerts * 2))); 
                             }
                             
+                            // 4. BONES / JOINTS (Wajib Uint8 & Float32)
                             if (joints && weights && joints.length >= numVerts * 4 && weights.length >= numVerts * 4) {
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, joints.subarray(0, numVerts * 4), 4, pc.TYPE_UINT8, false);
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, weights.subarray(0, numVerts * 4), 4, pc.TYPE_FLOAT32, false);
+                                mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, new Uint8Array(joints.subarray(0, numVerts * 4)), 4, pc.TYPE_UINT8, false);
+                                mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, new Float32Array(weights.subarray(0, numVerts * 4)), 4, pc.TYPE_FLOAT32, false);
                             }
                             
-                            if (idx && idx.length > 0) mesh.setIndices(idx);
+                            // 5. INDICES (Wajib Uint16 atau Uint32, panjang kelipatan 3)
+                            if (idx && idx.length > 0) {
+                                const triCount = Math.floor(idx.length / 3) * 3;
+                                let maxIdx = 0;
+                                for (let k = 0; k < triCount; k++) { if (idx[k] > maxIdx) maxIdx = idx[k]; }
+                                
+                                // Paksa konversi tipe data index sesuai batas maksimal vertex
+                                if (maxIdx > 65535) {
+                                    mesh.setIndices(new Uint32Array(idx.subarray(0, triCount)));
+                                } else {
+                                    mesh.setIndices(new Uint16Array(idx.subarray(0, triCount)));
+                                }
+                            }
 
+                            // 6. MORPH TARGETS
                             let morphInst = null;
                             if (prim.targets && prim.targets.length > 0) {
                                 const targets = prim.targets.map((t, tIdx) => {
@@ -248,8 +265,8 @@
                                     const mName = targetNames[tIdx] || `Shape_${tIdx}`;
                                     return new pc.MorphTarget({
                                         name: mName,
-                                        deltaPositions: (dPos && dPos.length >= numVerts * 3) ? dPos.subarray(0, numVerts * 3) : new Float32Array(numVerts * 3),
-                                        deltaNormals: (dNorm && dNorm.length >= numVerts * 3) ? dNorm.subarray(0, numVerts * 3) : null
+                                        deltaPositions: (dPos && dPos.length >= numVerts * 3) ? new Float32Array(dPos.subarray(0, numVerts * 3)) : new Float32Array(numVerts * 3),
+                                        deltaNormals: (dNorm && dNorm.length >= numVerts * 3) ? new Float32Array(dNorm.subarray(0, numVerts * 3)) : null
                                     });
                                 });
                                 mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
