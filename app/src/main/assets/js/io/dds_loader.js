@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/dds_loader.js ===== */
-// Decoder tekstur .DDS (DXT1, DXT3, DXT5, Uncompressed RGBA/BGRA, & DXGI BC7 / format 98) ke pc.Texture
+// Decoder tekstur .DDS (DXT1, DXT3, DXT5, Uncompressed RGBA/BGRA, & DXGI BC7 / format 98-99) ke pc.Texture
 
 (function () {
     'use strict';
@@ -93,6 +93,45 @@
         return rgba;
     }
 
+    function decodeDxt3ToRgba(src, width, height, offset) {
+        const rgba = new Uint8Array(width * height * 4);
+        const palette = new Array(4);
+        let pos = offset;
+        const bw = Math.max(1, Math.ceil(width / 4));
+        const bh = Math.max(1, Math.ceil(height / 4));
+
+        for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                if (pos + 16 > src.length) break;
+                const alphaBits = (src[pos]) | (src[pos + 1] << 8) | (src[pos + 2] << 16) | (src[pos + 3] << 24);
+                const c0 = src[pos + 8] | (src[pos + 9] << 8);
+                const c1 = src[pos + 10] | (src[pos + 11] << 8);
+                const idxBits = (src[pos + 12]) | (src[pos + 13] << 8) | (src[pos + 14] << 16) | (src[pos + 15] << 24);
+                pos += 16;
+                decodeColor565(c0, c1, palette);
+
+                for (let py = 0; py < 4; py++) {
+                    const y = by * 4 + py;
+                    if (y >= height) continue;
+                    for (let px = 0; px < 4; px++) {
+                        const x = bx * 4 + px;
+                        if (x >= width) continue;
+                        const cell = py * 4 + px;
+                        const colIdx = (idxBits >>> (cell * 2)) & 0x3;
+                        const c = palette[colIdx];
+                        const dst = (y * width + x) * 4;
+                        rgba[dst] = c[0];
+                        rgba[dst + 1] = c[1];
+                        rgba[dst + 2] = c[2];
+                        const aVal = (alphaBits >>> (cell * 4)) & 0xF;
+                        rgba[dst + 3] = aVal * 17;
+                    }
+                }
+            }
+        }
+        return rgba;
+    }
+
     function decodeDxt5ToRgba(src, width, height, offset) {
         const rgba = new Uint8Array(width * height * 4);
         const palette = new Array(4);
@@ -152,7 +191,6 @@
         return rgba;
     }
 
-    // Decoder aman untuk blok BC7 (DXGI 97 / 98 - mode 6 & fallback blok 4x4) agar format 98 tidak gagal
     function decodeBc7BlockToRgba(src, pos, outBlockRgba) {
         let bitPos = 0;
         function readBits(n) {
@@ -316,8 +354,9 @@
             const dxgiFormat = dv.getUint32(128, true);
             dataOffset = 148;
 
-            if (dxgiFormat === 98 || dxgiFormat === 97) {
-                rgba = decodeBc7ToRgba(src, width, height, dataOffset, dxgiFormat === 98);
+            // Dukungan BC7 (97 = UNORM, 98 = SRGB, 99 = BGRA)
+            if (dxgiFormat === 98 || dxgiFormat === 97 || dxgiFormat === 99) {
+                rgba = decodeBc7ToRgba(src, width, height, dataOffset, dxgiFormat === 98 || dxgiFormat === 99);
                 formatLabel = 'DXGI_BC7_' + dxgiFormat;
             } else if (dxgiFormat === 71 || dxgiFormat === 72) {
                 rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
@@ -332,7 +371,7 @@
             rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
             formatLabel = 'DXT1';
         } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT3) {
-            rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+            rgba = decodeDxt3ToRgba(src, width, height, dataOffset);
             formatLabel = 'DXT3';
         } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT5) {
             rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
