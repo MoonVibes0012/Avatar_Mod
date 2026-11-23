@@ -44,9 +44,9 @@
             const bv = gltf.bufferViews[imgInfo.bufferView];
             const byteOffset = bv.byteOffset || 0;
             const byteLength = bv.byteLength || 0;
-            if (byteOffset + byteLength > bin.byteLength) continue;
+            if (byteOffset < 0 || byteLength <= 0 || byteOffset + byteLength > bin.byteLength) continue;
 
-            const slice = bin.slice(byteOffset, byteOffset + byteLength);
+            const slice = bin.subarray(byteOffset, byteOffset + byteLength);
             const mime = String(imgInfo.mimeType || 'image/png').toLowerCase();
             const isDds = mime.includes('dds') ||
                           (slice.byteLength >= 4 && slice[0] === 0x44 && slice[1] === 0x44 && slice[2] === 0x53 && slice[3] === 0x20);
@@ -153,43 +153,50 @@
 
     function createAccessorReader(gltf, bin) {
         return (idx) => {
-            if (idx === undefined || !gltf.accessors || !gltf.accessors[idx]) return null;
+            if (idx === undefined || idx === null || !gltf.accessors || !gltf.accessors[idx]) return null;
+            if (!bin || !bin.buffer) return null;
+
             const acc = gltf.accessors[idx];
+            if (!gltf.bufferViews || acc.bufferView === undefined || !gltf.bufferViews[acc.bufferView]) {
+                return null;
+            }
             const bv = gltf.bufferViews[acc.bufferView];
-            if (!bv) return null;
             const off = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+
             const compMap = {
-                5120: Int8Array,
-                5121: Uint8Array,
-                5122: Int16Array,
-                5123: Uint16Array,
-                5125: Uint32Array,
-                5126: Float32Array
+                5120: { Ctor: Int8Array, bytes: 1 },
+                5121: { Ctor: Uint8Array, bytes: 1 },
+                5122: { Ctor: Int16Array, bytes: 2 },
+                5123: { Ctor: Uint16Array, bytes: 2 },
+                5125: { Ctor: Uint32Array, bytes: 4 },
+                5126: { Ctor: Float32Array, bytes: 4 }
             };
             const typeMap = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
-            const Arr = compMap[acc.componentType] || Float32Array;
+            const spec = compMap[acc.componentType] || { Ctor: Float32Array, bytes: 4 };
             const numComp = typeMap[acc.type] || 1;
-            const stride = bv.byteStride || 0;
+            const elemBytes = spec.bytes * numComp;
+            const stride = (bv.byteStride && bv.byteStride > 0) ? bv.byteStride : elemBytes;
+            const count = Math.max(0, acc.count || 0);
 
-            if (stride === 0 || stride === Arr.BYTES_PER_ELEMENT * numComp) {
-                const alignedBuf = bin.buffer.slice(
-                    bin.byteOffset + off,
-                    bin.byteOffset + off + acc.count * numComp * Arr.BYTES_PER_ELEMENT
-                );
-                return new Arr(alignedBuf);
-            }
+            const totalLen = count * numComp;
+            const result = new spec.Ctor(totalLen);
+            if (count === 0 || off < 0) return result;
 
-            const result = new Arr(acc.count * numComp);
             const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
-            for (let i = 0; i < acc.count; i++) {
+            for (let i = 0; i < count; i++) {
+                const rowStart = off + i * stride;
+                if (rowStart + elemBytes > bin.byteLength) break;
+
                 for (let c = 0; c < numComp; c++) {
-                    const bytePos = off + i * stride + c * Arr.BYTES_PER_ELEMENT;
-                    if (acc.componentType === 5126) result[i * numComp + c] = dv.getFloat32(bytePos, true);
-                    else if (acc.componentType === 5123) result[i * numComp + c] = dv.getUint16(bytePos, true);
-                    else if (acc.componentType === 5125) result[i * numComp + c] = dv.getUint32(bytePos, true);
-                    else if (acc.componentType === 5121) result[i * numComp + c] = dv.getUint8(bytePos);
-                    else if (acc.componentType === 5120) result[i * numComp + c] = dv.getInt8(bytePos);
-                    else if (acc.componentType === 5122) result[i * numComp + c] = dv.getInt16(bytePos, true);
+                    const bytePos = rowStart + c * spec.bytes;
+                    let val = 0;
+                    if (acc.componentType === 5126) val = dv.getFloat32(bytePos, true);
+                    else if (acc.componentType === 5123) val = dv.getUint16(bytePos, true);
+                    else if (acc.componentType === 5125) val = dv.getUint32(bytePos, true);
+                    else if (acc.componentType === 5121) val = dv.getUint8(bytePos);
+                    else if (acc.componentType === 5120) val = dv.getInt8(bytePos);
+                    else if (acc.componentType === 5122) val = dv.getInt16(bytePos, true);
+                    result[i * numComp + c] = val;
                 }
             }
             return result;
@@ -223,12 +230,14 @@
                 const jsonText = new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen));
                 const gltf = JSON.parse(jsonText);
 
-                const binOffset = 20 + jsonLen + 8;
+                const binHeaderOff = 20 + jsonLen;
                 let bin = null;
-                if (buf.byteLength >= binOffset) {
-                    const binLen = d.getUint32(20 + jsonLen, true);
-                    if (buf.byteLength >= binOffset + binLen) {
-                        bin = new Uint8Array(buf, binOffset, binLen);
+                if (buf.byteLength >= binHeaderOff + 8) {
+                    const binLen = d.getUint32(binHeaderOff, true);
+                    const binDataOff = binHeaderOff + 8;
+                    const safeBinLen = Math.min(binLen, Math.max(0, buf.byteLength - binDataOff));
+                    if (safeBinLen > 0) {
+                        bin = new Uint8Array(buf, binDataOff, safeBinLen);
                     }
                 }
 
@@ -308,8 +317,9 @@
                         const targetNames = (meshDef.extras && meshDef.extras.targetNames) ? meshDef.extras.targetNames : [];
 
                         (meshDef.primitives || []).forEach((prim) => {
+                            if (!prim.attributes) return;
                             const pos = getAcc(prim.attributes.POSITION);
-                            if (!pos || pos.length === 0) return;
+                            if (!pos || pos.length < 3) return;
                             const norm = getAcc(prim.attributes.NORMAL);
                             const uv = getAcc(prim.attributes.TEXCOORD_0);
                             const idx = prim.indices !== undefined ? getAcc(prim.indices) : null;
@@ -318,17 +328,17 @@
 
                             const mesh = new pc.Mesh(pcApp.graphicsDevice);
                             mesh.setPositions(pos);
-                            if (norm) {
+                            if (norm && norm.length === pos.length) {
                                 mesh.setNormals(norm);
                             } else {
                                 mesh.setNormals(pc.calculateNormals(pos, idx || Array.from({ length: pos.length / 3 }, (_, k) => k)));
                             }
-                            if (uv) mesh.setUvs(0, uv);
-                            if (joints && weights) {
+                            if (uv && uv.length >= (pos.length / 3) * 2) mesh.setUvs(0, uv);
+                            if (joints && weights && joints.length === (pos.length / 3) * 4 && weights.length === (pos.length / 3) * 4) {
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, joints, 4, pc.TYPE_UINT8, false);
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, weights, 4, pc.TYPE_FLOAT32, false);
                             }
-                            if (idx) mesh.setIndices(idx);
+                            if (idx && idx.length > 0) mesh.setIndices(idx);
 
                             let morphInst = null;
                             if (prim.targets && prim.targets.length > 0) {
@@ -338,8 +348,8 @@
                                     const mName = targetNames[tIdx] || `Shape_${tIdx}`;
                                     return new pc.MorphTarget({
                                         name: mName,
-                                        deltaPositions: dPos || new Float32Array(pos.length),
-                                        deltaNormals: dNorm
+                                        deltaPositions: (dPos && dPos.length === pos.length) ? dPos : new Float32Array(pos.length),
+                                        deltaNormals: (dNorm && dNorm.length === pos.length) ? dNorm : null
                                     });
                                 });
                                 mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
