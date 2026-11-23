@@ -4,6 +4,11 @@
 (function () {
     'use strict';
 
+    const panelStates = {
+        left: false,
+        right: false
+    };
+
     function byId(id) {
         return document.getElementById(id);
     }
@@ -16,12 +21,12 @@
     function ensureBaseUiLayers() {
         const canvas = byId('gl');
         if (canvas) {
-            canvas.style.position = 'fixed';
-            canvas.style.inset = '0';
-            canvas.style.width = '100%';
-            canvas.style.height = '100%';
-            canvas.style.zIndex = '1';
-            canvas.style.display = 'block';
+            canvas.style.setProperty('position', 'fixed', 'important');
+            canvas.style.setProperty('inset', '0', 'important');
+            canvas.style.setProperty('width', '100%', 'important');
+            canvas.style.setProperty('height', '100%', 'important');
+            canvas.style.setProperty('z-index', '1', 'important');
+            canvas.style.setProperty('display', 'block', 'important');
         }
 
         const topBar = document.querySelector('.top');
@@ -32,11 +37,11 @@
             topBar.style.setProperty('right', '0', 'important');
             topBar.style.setProperty('z-index', '60', 'important');
             topBar.style.setProperty('display', 'flex', 'important');
-            topBar.style.flexWrap = 'wrap';
-            topBar.style.alignItems = 'center';
-            topBar.style.gap = '4px';
-            topBar.style.padding = '6px';
-            topBar.style.background = 'rgba(15, 19, 28, 0.92)';
+            topBar.style.setProperty('flex-wrap', 'wrap', 'important');
+            topBar.style.setProperty('align-items', 'center', 'important');
+            topBar.style.setProperty('gap', '4px', 'important');
+            topBar.style.setProperty('padding', '6px', 'important');
+            topBar.style.setProperty('background', 'rgba(15, 19, 28, 0.92)', 'important');
             topBar.style.setProperty('pointer-events', 'auto', 'important');
         }
 
@@ -49,9 +54,9 @@
             panel.style.setProperty('width', '275px', 'important');
             panel.style.setProperty('max-width', '84vw', 'important');
             panel.style.setProperty('z-index', '55', 'important');
-            panel.style.background = 'rgba(16, 20, 30, 0.96)';
-            panel.style.color = '#eef4ff';
-            panel.style.overflowY = 'auto';
+            panel.style.setProperty('background', 'rgba(16, 20, 30, 0.96)', 'important');
+            panel.style.setProperty('color', '#eef4ff', 'important');
+            panel.style.setProperty('overflow-y', 'auto', 'important');
             panel.style.setProperty('pointer-events', 'auto', 'important');
             if (id === 'left') panel.style.setProperty('left', '0', 'important');
             if (id === 'right') panel.style.setProperty('right', '0', 'important');
@@ -59,41 +64,42 @@
 
         const statusEl = byId('status');
         if (statusEl) {
-            statusEl.style.position = 'fixed';
-            statusEl.style.left = '8px';
-            statusEl.style.bottom = '6px';
-            statusEl.style.zIndex = '65';
-            statusEl.style.pointerEvents = 'none';
-            statusEl.style.background = 'rgba(15, 19, 28, 0.88)';
-            statusEl.style.color = '#cfe4ff';
-            statusEl.style.padding = '3px 8px';
-            statusEl.style.borderRadius = '6px';
-            statusEl.style.fontSize = '11px';
+            statusEl.style.setProperty('position', 'fixed', 'important');
+            statusEl.style.setProperty('left', '8px', 'important');
+            statusEl.style.setProperty('bottom', '6px', 'important');
+            statusEl.style.setProperty('z-index', '65', 'important');
+            statusEl.style.setProperty('pointer-events', 'none', 'important');
+            statusEl.style.setProperty('background', 'rgba(15, 19, 28, 0.88)', 'important');
+            statusEl.style.setProperty('color', '#cfe4ff', 'important');
+            statusEl.style.setProperty('padding', '3px 8px', 'important');
+            statusEl.style.setProperty('border-radius', '6px', 'important');
+            statusEl.style.setProperty('font-size', '11px', 'important');
         }
     }
 
-    function isPanelCurrentlyOpen(panelId) {
+    function applyPanelVisual(panelId, open) {
         const panel = byId(panelId);
-        if (!panel) return false;
-        return panel.dataset.vtfOpen === '1' && panel.style.display !== 'none';
-    }
-
-    function setPanelOpen(panelId, open) {
-        const panel = byId(panelId);
-        const backdrop = byId('panelBackdrop');
         if (!panel) return;
-
-        ensureBaseUiLayers();
         const wantOpen = !!open;
-        panel.dataset.vtfOpen = wantOpen ? '1' : '0';
+        panelStates[panelId] = wantOpen;
+
         panel.classList.toggle('mobile-open', wantOpen);
         panel.classList.toggle('open', wantOpen);
         panel.style.setProperty('display', wantOpen ? 'block' : 'none', 'important');
+        panel.style.setProperty('visibility', wantOpen ? 'visible' : 'hidden', 'important');
+        panel.style.setProperty('opacity', wantOpen ? '1' : '0', 'important');
+        panel.style.setProperty('transform', 'translateX(0)', 'important');
+    }
 
-        const leftOpen = isPanelCurrentlyOpen('left');
-        const rightOpen = isPanelCurrentlyOpen('right');
+    function setPanelOpen(panelId, open, announce) {
+        if (panelId !== 'left' && panelId !== 'right') return;
+        ensureBaseUiLayers();
+        const wantOpen = !!open;
+        applyPanelVisual(panelId, wantOpen);
+
+        const backdrop = byId('panelBackdrop');
         if (backdrop) {
-            const anyOpen = leftOpen || rightOpen;
+            const anyOpen = !!(panelStates.left || panelStates.right);
             backdrop.hidden = !anyOpen;
             backdrop.style.setProperty('position', 'fixed', 'important');
             backdrop.style.setProperty('inset', '0', 'important');
@@ -101,23 +107,24 @@
             backdrop.style.setProperty('display', anyOpen ? 'block' : 'none', 'important');
         }
 
-        setBootStatus(
-            (panelId === 'left' ? 'Panel MENU: ' : 'Panel INSPECT: ') + (wantOpen ? 'TERBUKA' : 'DITUTUP')
-        );
-    }
-
-    function togglePanel(panelId) {
-        const currentlyOpen = isPanelCurrentlyOpen(panelId);
-        const otherId = panelId === 'left' ? 'right' : 'left';
-        if (!currentlyOpen) {
-            setPanelOpen(otherId, false);
-            setPanelOpen(panelId, true);
-        } else {
-            setPanelOpen(panelId, false);
+        if (announce) {
+            setBootStatus(
+                (panelId === 'left' ? 'Panel MENU: ' : 'Panel INSPECT: ') + (wantOpen ? 'TERBUKA' : 'DITUTUP')
+            );
         }
     }
 
-    window.__vtfSetPanel = setPanelOpen;
+    function togglePanel(panelId) {
+        if (panelId !== 'left' && panelId !== 'right') return;
+        const nextOpen = !panelStates[panelId];
+        const otherId = panelId === 'left' ? 'right' : 'left';
+        if (nextOpen) {
+            setPanelOpen(otherId, false, false);
+        }
+        setPanelOpen(panelId, nextOpen, true);
+    }
+
+    window.__vtfSetPanel = function (id, open) { setPanelOpen(id, open, true); };
     window.__vtfTogglePanel = togglePanel;
 
     function rebindSubSystems() {
@@ -170,12 +177,12 @@
             if (closeBtn) {
                 e.preventDefault();
                 const panelId = closeBtn.getAttribute('data-panel');
-                if (panelId) setPanelOpen(panelId, false);
+                if (panelId) setPanelOpen(panelId, false, true);
                 return;
             }
             if (target.closest('#panelBackdrop')) {
-                setPanelOpen('left', false);
-                setPanelOpen('right', false);
+                setPanelOpen('left', false, false);
+                setPanelOpen('right', false, true);
             }
         }, true);
     }
@@ -210,8 +217,8 @@
             });
         }
 
-        setPanelOpen('left', false);
-        setPanelOpen('right', false);
+        setPanelOpen('left', false, false);
+        setPanelOpen('right', false, false);
 
         rebindSubSystems();
         setBootStatus('Siap!');
