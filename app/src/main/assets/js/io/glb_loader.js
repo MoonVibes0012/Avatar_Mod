@@ -18,7 +18,7 @@
             if (typeof S !== 'undefined' && S) return S;
         } catch (e) {}
         if (!window.S) {
-            window.S = { objs: [], selected: null, cnt: 1 };
+            window.S = { objects: [], selected: null, cnt: 1 };
         }
         return window.S;
     }
@@ -178,7 +178,8 @@
             const stride = (bv.byteStride && bv.byteStride > 0) ? bv.byteStride : elemBytes;
             const count = Math.max(0, acc.count || 0);
 
-            const totalLen = count * numComp;
+            // PERBAIKAN: Gunakan Math.floor untuk mencegah error typed array length
+            const totalLen = Math.floor(count * numComp);
             const result = new spec.Ctor(totalLen);
             if (count === 0 || off < 0) return result;
 
@@ -251,7 +252,7 @@
                 const getAcc = createAccessorReader(gltf, bin);
 
                 st.cnt = st.cnt || 1;
-                st.objs = st.objs || [];
+                st.objects = st.objects || []; // PERBAIKAN: Gunakan st.objects
                 const rootEnt = new pc.Entity(file.name.replace(/\.(glb|vrm|gltf)$/i, '') + '_' + (st.cnt++));
                 const allPositions = [], allIndices = [], allUvs = [], allNormals = [];
                 let vtxOffset = 0;
@@ -331,10 +332,10 @@
                             if (norm && norm.length === pos.length) {
                                 mesh.setNormals(norm);
                             } else {
-                                mesh.setNormals(pc.calculateNormals(pos, idx || Array.from({ length: pos.length / 3 }, (_, k) => k)));
+                                mesh.setNormals(pc.calculateNormals(pos, idx || Array.from({ length: Math.floor(pos.length / 3) }, (_, k) => k)));
                             }
-                            if (uv && uv.length >= (pos.length / 3) * 2) mesh.setUvs(0, uv);
-                            if (joints && weights && joints.length === (pos.length / 3) * 4 && weights.length === (pos.length / 3) * 4) {
+                            if (uv && uv.length >= Math.floor(pos.length / 3) * 2) mesh.setUvs(0, uv);
+                            if (joints && weights && joints.length === Math.floor(pos.length / 3) * 4 && weights.length === Math.floor(pos.length / 3) * 4) {
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, joints, 4, pc.TYPE_UINT8, false);
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, weights, 4, pc.TYPE_FLOAT32, false);
                             }
@@ -348,7 +349,8 @@
                                     const mName = targetNames[tIdx] || `Shape_${tIdx}`;
                                     return new pc.MorphTarget({
                                         name: mName,
-                                        deltaPositions: (dPos && dPos.length === pos.length) ? dPos : new Float32Array(pos.length),
+                                        // PERBAIKAN: Gunakan Math.floor untuk mencegah error typed array
+                                        deltaPositions: (dPos && dPos.length === pos.length) ? dPos : new Float32Array(Math.floor(pos.length)),
                                         deltaNormals: (dNorm && dNorm.length === pos.length) ? dNorm : null
                                     });
                                 });
@@ -382,9 +384,9 @@
                             if (idx) {
                                 for (let k = 0; k < idx.length; k++) allIndices.push(idx[k] + vtxOffset);
                             } else {
-                                for (let k = 0; k < pos.length / 3; k++) allIndices.push(k + vtxOffset);
+                                for (let k = 0; k < Math.floor(pos.length / 3); k++) allIndices.push(k + vtxOffset);
                             }
-                            vtxOffset += pos.length / 3;
+                            vtxOffset += Math.floor(pos.length / 3);
                         });
 
                         if (meshInstances.length > 0) {
@@ -437,7 +439,7 @@
                 window.meshCachePool.push(rootEnt._meshCache);
 
                 pcApp.root.addChild(rootEnt);
-                st.objs.push(rootEnt);
+                st.objects.push(rootEnt); // PERBAIKAN: Gunakan st.objects
 
                 if (typeof window.selectObject === 'function') window.selectObject(rootEnt);
                 else if (typeof selectObject === 'function') selectObject(rootEnt);
