@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/camera/controls.js ===== */
-// Kamera orbit + lock saat drag anatomi + delegasi ke helper panel tunggal
+// Kamera orbit + lock saat drag anatomi (Delegasi panel ditangani sepenuhnya oleh boot.js)
 
 (function () {
 'use strict';
@@ -23,58 +23,6 @@ function isAnatomyDragLocked(ctrl) {
     if (window.__vtfAnatomyDragging === true) return true;
     if (ctrl && ctrl.camera && ctrl.camera._orbitLocked === true) return true;
     return false;
-}
-
-function setupPanels() {
-    if (window.__vtfPanelDelegationBound) return;
-    if (window.__vtfPanelsBound) return;
-    window.__vtfPanelsBound = true;
-
-    function setPanelLocal(id, open) {
-        if (typeof window.__vtfSetPanel === 'function') {
-            window.__vtfSetPanel(id, open);
-            return;
-        }
-        var panel = $(id);
-        if (!panel) return;
-        panel.classList.toggle('mobile-open', !!open);
-        panel.style.removeProperty('display');
-        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
-        var backdrop = $('panelBackdrop');
-        if (backdrop) {
-            var anyOpen = !!document.querySelector('.panel.mobile-open');
-            backdrop.hidden = !anyOpen;
-        }
-        var btn = (id === 'left') ? $('parts') : $('inspector');
-        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-
-    var parts = $('parts');
-    if (parts) parts.addEventListener('click', function () {
-        var p = $('left');
-        setPanelLocal('left', p ? !p.classList.contains('mobile-open') : true);
-    });
-    var inspector = $('inspector');
-    if (inspector) inspector.addEventListener('click', function () {
-        var p = $('right');
-        setPanelLocal('right', p ? !p.classList.contains('mobile-open') : true);
-    });
-    document.querySelectorAll('.btn-close-panel').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            setPanelLocal(btn.getAttribute('data-panel'), false);
-        });
-    });
-    var backdrop = $('panelBackdrop');
-    if (backdrop) backdrop.addEventListener('click', function () {
-        setPanelLocal('left', false);
-        setPanelLocal('right', false);
-    });
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') {
-            setPanelLocal('left', false);
-            setPanelLocal('right', false);
-        }
-    });
 }
 
 var CameraControls = {
@@ -348,12 +296,6 @@ var CameraControls = {
 };
 
 window.CameraControls = CameraControls;
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setupPanels);
-} else {
-    setupPanels();
-}
 
 function tryInitCamera() {
     var app = getApp();
