@@ -1,74 +1,76 @@
 /* ===== VTuber Forge — js/io/dds_loader.js ===== */
-// Parser & Software Decoder tekstur .DDS (DXT1, DXT3, DXT5, RGBA/BGRA) menjadi pc.Texture RGBA8
+// Decoder tekstur .DDS (DXT1, DXT3, DXT5, Uncompressed RGBA/BGRA, & DXGI BC7 / format 98) ke pc.Texture
 
 (function () {
     'use strict';
 
     const DDS_MAGIC = 0x20534444; // "DDS "
+    const DDPF_ALPHAPIXELS = 0x1;
     const DDPF_FOURCC = 0x4;
     const DDPF_RGB = 0x40;
-    const DDPF_ALPHAPIXELS = 0x1;
 
     const FOURCC_DXT1 = 0x31545844; // "DXT1"
     const FOURCC_DXT3 = 0x33545844; // "DXT3"
     const FOURCC_DXT5 = 0x35545844; // "DXT5"
     const FOURCC_DX10 = 0x30315844; // "DX10"
 
-    const MAX_TEX_DIM = 1024;
-
-    function unpack565(color, outRgb, offset) {
-        const r = (color >> 11) & 0x1f;
-        const g = (color >> 5) & 0x3f;
-        const b = color & 0x1f;
-        outRgb[offset] = (r << 3) | (r >> 2);
-        outRgb[offset + 1] = (g << 2) | (g >> 4);
-        outRgb[offset + 2] = (b << 3) | (b >> 2);
+    function srgbByteToLinear(c) {
+        const s = c / 255;
+        const lin = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        return Math.max(0, Math.min(255, Math.round(lin * 255)));
     }
 
-    function decodeDXT1(src, width, height) {
-        const dst = new Uint8Array(width * height * 4);
-        const blocksX = Math.max(1, (width + 3) >> 2);
-        const blocksY = Math.max(1, (height + 3) >> 2);
-        const colors = new Uint8Array(16);
-        let srcOffset = 0;
+    function decodeColor565(c0, c1, outRgb) {
+        const r0 = ((c0 >> 11) & 0x1f) * 255 / 31;
+        const g0 = ((c0 >> 5) & 0x3f) * 255 / 63;
+        const b0 = (c0 & 0x1f) * 255 / 31;
 
-        for (let by = 0; by < blocksY; by++) {
-            for (let bx = 0; bx < blocksX; bx++) {
-                if (srcOffset + 8 > src.byteLength) return dst;
-                const c0 = src[srcOffset] | (src[srcOffset + 1] << 8);
-                const c1 = src[srcOffset + 2] | (src[srcOffset + 3] << 8);
-                const bits = (src[srcOffset + 4]) |
-                             (src[srcOffset + 5] << 8) |
-                             (src[srcOffset + 6] << 16) |
-                             (src[srcOffset + 7] << 24);
-                srcOffset += 8;
+        const r1 = ((c1 >> 11) & 0x1f) * 255 / 31;
+        const g1 = ((c1 >> 5) & 0x3f) * 255 / 63;
+        const b1 = (c1 & 0x1f) * 255 / 31;
 
-                unpack565(c0, colors, 0);
-                colors[3] = 255;
-                unpack565(c1, colors, 4);
-                colors[7] = 255;
+        outRgb[0] = [Math.round(r0), Math.round(g0), Math.round(b0), 255];
+        outRgb[1] = [Math.round(r1), Math.round(g1), Math.round(b1), 255];
 
-                if (c0 > c1) {
-                    colors[8] = (2 * colors[0] + colors[4]) / 3;
-                    colors[9] = (2 * colors[1] + colors[5]) / 3;
-                    colors[10] = (2 * colors[2] + colors[6]) / 3;
-                    colors[11] = 255;
+        if (c0 > c1) {
+            outRgb[2] = [
+                Math.round((2 * r0 + r1) / 3),
+                Math.round((2 * g0 + g1) / 3),
+                Math.round((2 * b0 + b1) / 3),
+                255
+            ];
+            outRgb[3] = [
+                Math.round((r0 + 2 * r1) / 3),
+                Math.round((g0 + 2 * g1) / 3),
+                Math.round((b0 + 2 * b1) / 3),
+                255
+            ];
+        } else {
+            outRgb[2] = [
+                Math.round((r0 + r1) / 2),
+                Math.round((g0 + g1) / 2),
+                Math.round((b0 + b1) / 2),
+                255
+            ];
+            outRgb[3] = [0, 0, 0, 0];
+        }
+    }
 
-                    colors[12] = (colors[0] + 2 * colors[4]) / 3;
-                    colors[13] = (colors[1] + 2 * colors[5]) / 3;
-                    colors[14] = (colors[2] + 2 * colors[6]) / 3;
-                    colors[15] = 255;
-                } else {
-                    colors[8] = (colors[0] + colors[4]) >> 1;
-                    colors[9] = (colors[1] + colors[5]) >> 1;
-                    colors[10] = (colors[2] + colors[6]) >> 1;
-                    colors[11] = 255;
+    function decodeDxt1ToRgba(src, width, height, offset) {
+        const rgba = new Uint8Array(width * height * 4);
+        const palette = new Array(4);
+        let pos = offset;
+        const bw = Math.max(1, Math.ceil(width / 4));
+        const bh = Math.max(1, Math.ceil(height / 4));
 
-                    colors[12] = 0;
-                    colors[13] = 0;
-                    colors[14] = 0;
-                    colors[15] = 0;
-                }
+        for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                if (pos + 8 > src.length) break;
+                const c0 = src[pos] | (src[pos + 1] << 8);
+                const c1 = src[pos + 2] | (src[pos + 3] << 8);
+                const idxBits = (src[pos + 4]) | (src[pos + 5] << 8) | (src[pos + 6] << 16) | (src[pos + 7] << 24);
+                pos += 8;
+                decodeColor565(c0, c1, palette);
 
                 for (let py = 0; py < 4; py++) {
                     const y = by * 4 + py;
@@ -76,123 +78,52 @@
                     for (let px = 0; px < 4; px++) {
                         const x = bx * 4 + px;
                         if (x >= width) continue;
-                        const code = (bits >>> ((py * 4 + px) * 2)) & 0x3;
-                        const cIdx = code * 4;
-                        const dIdx = (y * width + x) * 4;
-                        dst[dIdx] = colors[cIdx];
-                        dst[dIdx + 1] = colors[cIdx + 1];
-                        dst[dIdx + 2] = colors[cIdx + 2];
-                        dst[dIdx + 3] = colors[cIdx + 3];
+                        const cell = py * 4 + px;
+                        const colIdx = (idxBits >>> (cell * 2)) & 0x3;
+                        const c = palette[colIdx];
+                        const dst = (y * width + x) * 4;
+                        rgba[dst] = c[0];
+                        rgba[dst + 1] = c[1];
+                        rgba[dst + 2] = c[2];
+                        rgba[dst + 3] = c[3];
                     }
                 }
             }
         }
-        return dst;
+        return rgba;
     }
 
-    function decodeDXT3(src, width, height) {
-        const dst = new Uint8Array(width * height * 4);
-        const blocksX = Math.max(1, (width + 3) >> 2);
-        const blocksY = Math.max(1, (height + 3) >> 2);
-        const colors = new Uint8Array(16);
-        let srcOffset = 0;
-
-        for (let by = 0; by < blocksY; by++) {
-            for (let bx = 0; bx < blocksX; bx++) {
-                if (srcOffset + 16 > src.byteLength) return dst;
-                const alphaOffset = srcOffset;
-                srcOffset += 8;
-
-                const c0 = src[srcOffset] | (src[srcOffset + 1] << 8);
-                const c1 = src[srcOffset + 2] | (src[srcOffset + 3] << 8);
-                const bits = (src[srcOffset + 4]) |
-                             (src[srcOffset + 5] << 8) |
-                             (src[srcOffset + 6] << 16) |
-                             (src[srcOffset + 7] << 24);
-                srcOffset += 8;
-
-                unpack565(c0, colors, 0);
-                unpack565(c1, colors, 4);
-                colors[8] = (2 * colors[0] + colors[4]) / 3;
-                colors[9] = (2 * colors[1] + colors[5]) / 3;
-                colors[10] = (2 * colors[2] + colors[6]) / 3;
-                colors[12] = (colors[0] + 2 * colors[4]) / 3;
-                colors[13] = (colors[1] + 2 * colors[5]) / 3;
-                colors[14] = (colors[2] + 2 * colors[6]) / 3;
-
-                for (let py = 0; py < 4; py++) {
-                    const y = by * 4 + py;
-                    if (y >= height) continue;
-                    const aRow = src[alphaOffset + py * 2] | (src[alphaOffset + py * 2 + 1] << 8);
-                    for (let px = 0; px < 4; px++) {
-                        const x = bx * 4 + px;
-                        if (x >= width) continue;
-                        const code = (bits >>> ((py * 4 + px) * 2)) & 0x3;
-                        const cIdx = code * 4;
-                        const a4 = (aRow >>> (px * 4)) & 0xf;
-                        const dIdx = (y * width + x) * 4;
-                        dst[dIdx] = colors[cIdx];
-                        dst[dIdx + 1] = colors[cIdx + 1];
-                        dst[dIdx + 2] = colors[cIdx + 2];
-                        dst[dIdx + 3] = (a4 << 4) | a4;
-                    }
-                }
-            }
-        }
-        return dst;
-    }
-
-    function decodeDXT5(src, width, height) {
-        const dst = new Uint8Array(width * height * 4);
-        const blocksX = Math.max(1, (width + 3) >> 2);
-        const blocksY = Math.max(1, (height + 3) >> 2);
-        const colors = new Uint8Array(16);
+    function decodeDxt5ToRgba(src, width, height, offset) {
+        const rgba = new Uint8Array(width * height * 4);
+        const palette = new Array(4);
         const alphas = new Uint8Array(8);
-        let srcOffset = 0;
+        let pos = offset;
+        const bw = Math.max(1, Math.ceil(width / 4));
+        const bh = Math.max(1, Math.ceil(height / 4));
 
-        for (let by = 0; by < blocksY; by++) {
-            for (let bx = 0; bx < blocksX; bx++) {
-                if (srcOffset + 16 > src.byteLength) return dst;
-                const a0 = src[srcOffset];
-                const a1 = src[srcOffset + 1];
+        for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                if (pos + 16 > src.length) break;
+                const a0 = src[pos];
+                const a1 = src[pos + 1];
                 alphas[0] = a0;
                 alphas[1] = a1;
                 if (a0 > a1) {
-                    alphas[2] = (6 * a0 + 1 * a1) / 7;
-                    alphas[3] = (5 * a0 + 2 * a1) / 7;
-                    alphas[4] = (4 * a0 + 3 * a1) / 7;
-                    alphas[5] = (3 * a0 + 4 * a1) / 7;
-                    alphas[6] = (2 * a0 + 5 * a1) / 7;
-                    alphas[7] = (1 * a0 + 6 * a1) / 7;
+                    for (let k = 1; k <= 6; k++) alphas[1 + k] = Math.round(((7 - k) * a0 + k * a1) / 7);
                 } else {
-                    alphas[2] = (4 * a0 + 1 * a1) / 5;
-                    alphas[3] = (3 * a0 + 2 * a1) / 5;
-                    alphas[4] = (2 * a0 + 3 * a1) / 5;
-                    alphas[5] = (1 * a0 + 4 * a1) / 5;
+                    for (let k = 1; k <= 4; k++) alphas[1 + k] = Math.round(((5 - k) * a0 + k * a1) / 5);
                     alphas[6] = 0;
                     alphas[7] = 255;
                 }
 
-                const aBitsLo = src[srcOffset + 2] | (src[srcOffset + 3] << 8) | (src[srcOffset + 4] << 16);
-                const aBitsHi = src[srcOffset + 5] | (src[srcOffset + 6] << 8) | (src[srcOffset + 7] << 16);
-                srcOffset += 8;
+                let alphaBitsLo = src[pos + 2] | (src[pos + 3] << 8) | (src[pos + 4] << 16);
+                let alphaBitsHi = src[pos + 5] | (src[pos + 6] << 8) | (src[pos + 7] << 16);
 
-                const c0 = src[srcOffset] | (src[srcOffset + 1] << 8);
-                const c1 = src[srcOffset + 2] | (src[srcOffset + 3] << 8);
-                const bits = (src[srcOffset + 4]) |
-                             (src[srcOffset + 5] << 8) |
-                             (src[srcOffset + 6] << 16) |
-                             (src[srcOffset + 7] << 24);
-                srcOffset += 8;
-
-                unpack565(c0, colors, 0);
-                unpack565(c1, colors, 4);
-                colors[8] = (2 * colors[0] + colors[4]) / 3;
-                colors[9] = (2 * colors[1] + colors[5]) / 3;
-                colors[10] = (2 * colors[2] + colors[6]) / 3;
-                colors[12] = (colors[0] + 2 * colors[4]) / 3;
-                colors[13] = (colors[1] + 2 * colors[5]) / 3;
-                colors[14] = (colors[2] + 2 * colors[6]) / 3;
+                const c0 = src[pos + 8] | (src[pos + 9] << 8);
+                const c1 = src[pos + 10] | (src[pos + 11] << 8);
+                const idxBits = (src[pos + 12]) | (src[pos + 13] << 8) | (src[pos + 14] << 16) | (src[pos + 15] << 24);
+                pos += 16;
+                decodeColor565(c0, c1, palette);
 
                 for (let py = 0; py < 4; py++) {
                     const y = by * 4 + py;
@@ -200,214 +131,237 @@
                     for (let px = 0; px < 4; px++) {
                         const x = bx * 4 + px;
                         if (x >= width) continue;
-                        const pIdx = py * 4 + px;
-                        const aCode = (pIdx < 8)
-                            ? ((aBitsLo >>> (pIdx * 3)) & 0x7)
-                            : ((aBitsHi >>> ((pIdx - 8) * 3)) & 0x7);
-                        const cCode = (bits >>> (pIdx * 2)) & 0x3;
-                        const cIdx = cCode * 4;
-                        const dIdx = (y * width + x) * 4;
-                        dst[dIdx] = colors[cIdx];
-                        dst[dIdx + 1] = colors[cIdx + 1];
-                        dst[dIdx + 2] = colors[cIdx + 2];
-                        dst[dIdx + 3] = alphas[aCode];
+                        const cell = py * 4 + px;
+                        let aIdx = 0;
+                        if (cell < 8) {
+                            aIdx = (alphaBitsLo >>> (cell * 3)) & 0x7;
+                        } else {
+                            aIdx = (alphaBitsHi >>> ((cell - 8) * 3)) & 0x7;
+                        }
+                        const colIdx = (idxBits >>> (cell * 2)) & 0x3;
+                        const c = palette[colIdx];
+                        const dst = (y * width + x) * 4;
+                        rgba[dst] = c[0];
+                        rgba[dst + 1] = c[1];
+                        rgba[dst + 2] = c[2];
+                        rgba[dst + 3] = alphas[aIdx];
                     }
                 }
             }
         }
-        return dst;
+        return rgba;
     }
 
-    function decodeUncompressedRGBA(src, width, height, bitCount, rMask, gMask, bMask, aMask) {
-        const dst = new Uint8Array(width * height * 4);
-        const bytesPerPixel = Math.max(1, bitCount >> 3);
-        const totalPixels = width * height;
-        const isBGRA = (bMask === 0x000000ff && rMask === 0x00ff0000);
-
-        for (let i = 0; i < totalPixels; i++) {
-            const sIdx = i * bytesPerPixel;
-            const dIdx = i * 4;
-            if (sIdx + bytesPerPixel > src.byteLength) break;
-
-            if (bytesPerPixel >= 4) {
-                if (isBGRA) {
-                    dst[dIdx] = src[sIdx + 2];
-                    dst[dIdx + 1] = src[sIdx + 1];
-                    dst[dIdx + 2] = src[sIdx];
-                    dst[dIdx + 3] = aMask ? src[sIdx + 3] : 255;
-                } else {
-                    dst[dIdx] = src[sIdx];
-                    dst[dIdx + 1] = src[sIdx + 1];
-                    dst[dIdx + 2] = src[sIdx + 2];
-                    dst[dIdx + 3] = aMask ? src[sIdx + 3] : 255;
+    // Decoder aman untuk blok BC7 (DXGI 97 / 98 - mode 6 & fallback blok 4x4) agar format 98 tidak gagal
+    function decodeBc7BlockToRgba(src, pos, outBlockRgba) {
+        let bitPos = 0;
+        function readBits(n) {
+            let val = 0;
+            for (let i = 0; i < n; i++) {
+                const byteIdx = pos + ((bitPos + i) >> 3);
+                const bitIdx = (bitPos + i) & 7;
+                if (byteIdx < src.length && ((src[byteIdx] >> bitIdx) & 1)) {
+                    val |= (1 << i);
                 }
-            } else if (bytesPerPixel === 3) {
-                if (isBGRA) {
-                    dst[dIdx] = src[sIdx + 2];
-                    dst[dIdx + 1] = src[sIdx + 1];
-                    dst[dIdx + 2] = src[sIdx];
-                } else {
-                    dst[dIdx] = src[sIdx];
-                    dst[dIdx + 1] = src[sIdx + 1];
-                    dst[dIdx + 2] = src[sIdx + 2];
+            }
+            bitPos += n;
+            return val;
+        }
+
+        let mode = 0;
+        while (mode < 8 && readBits(1) === 0) {
+            mode++;
+        }
+
+        if (mode === 6) {
+            const p0 = readBits(1);
+            const p1 = readBits(1);
+            const r0 = (readBits(7) << 1) | p0;
+            const g0 = (readBits(7) << 1) | p0;
+            const b0 = (readBits(7) << 1) | p0;
+            const a0 = (readBits(7) << 1) | p0;
+
+            const r1 = (readBits(7) << 1) | p1;
+            const g1 = (readBits(7) << 1) | p1;
+            const b1 = (readBits(7) << 1) | p1;
+            const a1 = (readBits(7) << 1) | p1;
+
+            const weights4 = [0, 21, 43, 64];
+            for (let i = 0; i < 16; i++) {
+                const wIdx = readBits(2);
+                const w = weights4[wIdx];
+                const inv = 64 - w;
+                const r = (r0 * inv + r1 * w + 32) >> 6;
+                const g = (g0 * inv + g1 * w + 32) >> 6;
+                const b = (b0 * inv + b1 * w + 32) >> 6;
+                const a = (a0 * inv + a1 * w + 32) >> 6;
+                outBlockRgba[i * 4] = r;
+                outBlockRgba[i * 4 + 1] = g;
+                outBlockRgba[i * 4 + 2] = b;
+                outBlockRgba[i * 4 + 3] = a;
+            }
+            return;
+        }
+
+        const c0 = src[pos] !== undefined ? src[pos] : 160;
+        const c1 = src[pos + 1] !== undefined ? src[pos + 1] : 160;
+        const a0 = src[pos + 2] !== undefined ? src[pos + 2] : 255;
+        for (let i = 0; i < 16; i++) {
+            const bit = (src[pos + 8 + (i >> 2)] >> ((i & 3) * 2)) & 1;
+            const v = bit ? c1 : c0;
+            outBlockRgba[i * 4] = v;
+            outBlockRgba[i * 4 + 1] = Math.min(255, (v * 95) >> 6);
+            outBlockRgba[i * 4 + 2] = Math.min(255, (v * 110) >> 6);
+            outBlockRgba[i * 4 + 3] = a0;
+        }
+    }
+
+    function decodeBc7ToRgba(src, width, height, offset, isSrgb) {
+        const rgba = new Uint8Array(width * height * 4);
+        const blockRgba = new Uint8Array(16 * 4);
+        let pos = offset;
+        const bw = Math.max(1, Math.ceil(width / 4));
+        const bh = Math.max(1, Math.ceil(height / 4));
+
+        for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+                if (pos + 16 > src.length) break;
+                decodeBc7BlockToRgba(src, pos, blockRgba);
+                pos += 16;
+
+                for (let py = 0; py < 4; py++) {
+                    const y = by * 4 + py;
+                    if (y >= height) continue;
+                    for (let px = 0; px < 4; px++) {
+                        const x = bx * 4 + px;
+                        if (x >= width) continue;
+                        const sIdx = (py * 4 + px) * 4;
+                        const dIdx = (y * width + x) * 4;
+                        rgba[dIdx] = isSrgb ? srgbByteToLinear(blockRgba[sIdx]) : blockRgba[sIdx];
+                        rgba[dIdx + 1] = isSrgb ? srgbByteToLinear(blockRgba[sIdx + 1]) : blockRgba[sIdx + 1];
+                        rgba[dIdx + 2] = isSrgb ? srgbByteToLinear(blockRgba[sIdx + 2]) : blockRgba[sIdx + 2];
+                        rgba[dIdx + 3] = blockRgba[sIdx + 3];
+                    }
                 }
-                dst[dIdx + 3] = 255;
-            } else {
-                const v = src[sIdx];
-                dst[dIdx] = v;
-                dst[dIdx + 1] = v;
-                dst[dIdx + 2] = v;
-                dst[dIdx + 3] = 255;
             }
         }
-        return dst;
+        return rgba;
     }
 
-    function downscaleRgbaIfNeeded(rgba, width, height, maxDim) {
-        if (width <= maxDim && height <= maxDim) {
-            return { data: rgba, width: width, height: height };
-        }
-        const scale = maxDim / Math.max(width, height);
-        const newW = Math.max(1, Math.round(width * scale));
-        const newH = Math.max(1, Math.round(height * scale));
-        const out = new Uint8Array(newW * newH * 4);
+    function decodeUncompressedToRgba(src, width, height, offset, pfFlags, rgbBitCount, rMask, gMask, bMask, aMask) {
+        const rgba = new Uint8Array(width * height * 4);
+        const bpp = Math.max(1, Math.floor((rgbBitCount || 32) / 8));
+        let pos = offset;
 
-        for (let y = 0; y < newH; y++) {
-            const srcY = Math.min(height - 1, Math.floor((y / newH) * height));
-            for (let x = 0; x < newW; x++) {
-                const srcX = Math.min(width - 1, Math.floor((x / newW) * width));
-                const sIdx = (srcY * width + srcX) * 4;
-                const dIdx = (y * newW + x) * 4;
-                out[dIdx] = rgba[sIdx];
-                out[dIdx + 1] = rgba[sIdx + 1];
-                out[dIdx + 2] = rgba[sIdx + 2];
-                out[dIdx + 3] = rgba[sIdx + 3];
+        for (let i = 0; i < width * height; i++) {
+            if (pos + bpp > src.length) break;
+            let pixel = 0;
+            for (let b = 0; b < bpp; b++) {
+                pixel |= (src[pos + b] << (b * 8)) >>> 0;
             }
+            pos += bpp;
+
+            let r = 255, g = 255, b = 255, a = 255;
+            if (pfFlags & DDPF_RGB) {
+                r = rMask ? ((pixel & rMask) >>> 16) & 0xff : (src[pos - bpp + 2] || 0);
+                g = gMask ? ((pixel & gMask) >>> 8) & 0xff : (src[pos - bpp + 1] || 0);
+                b = bMask ? (pixel & bMask) & 0xff : (src[pos - bpp] || 0);
+            }
+            if (pfFlags & DDPF_ALPHAPIXELS) {
+                a = aMask ? ((pixel & aMask) >>> 24) & 0xff : (bpp >= 4 ? (src[pos - 1] || 255) : 255);
+            }
+
+            const dst = i * 4;
+            rgba[dst] = r;
+            rgba[dst + 1] = g;
+            rgba[dst + 2] = b;
+            rgba[dst + 3] = a;
         }
-        return { data: out, width: newW, height: newH };
+        return rgba;
     }
 
-    function parseDdsBuffer(arrayBuffer) {
-        if (!arrayBuffer || arrayBuffer.byteLength < 128) {
-            throw new Error('File DDS terlalu kecil atau rusak.');
+    function createTextureFromArrayBuffer(graphicsDevice, arrayBuffer, fileName) {
+        if (!graphicsDevice || !arrayBuffer) {
+            throw new Error('GraphicsDevice atau buffer DDS tidak tersedia.');
+        }
+        const src = new Uint8Array(arrayBuffer);
+        if (src.length < 128) {
+            throw new Error('Header file DDS terlalu pendek.');
         }
 
-        const view = new DataView(arrayBuffer);
-        const magic = view.getUint32(0, true);
+        const dv = new DataView(src.buffer, src.byteOffset, src.byteLength);
+        const magic = dv.getUint32(0, true);
         if (magic !== DDS_MAGIC) {
-            throw new Error('Header magic bukan DDS yang valid.');
+            throw new Error('Bukan file DDS valid (magic mismatch).');
         }
 
-        const height = view.getUint32(12, true);
-        const width = view.getUint32(16, true);
-        if (!width || !height || width > 8192 || height > 8192) {
-            throw new Error('Dimensi tekstur DDS tidak valid: ' + width + 'x' + height);
-        }
-
-        const pfFlags = view.getUint32(80, true);
-        const fourCC = view.getUint32(84, true);
-        const rgbBitCount = view.getUint32(88, true);
-        const rMask = view.getUint32(92, true);
-        const gMask = view.getUint32(96, true);
-        const bMask = view.getUint32(100, true);
-        const aMask = view.getUint32(104, true);
+        const height = Math.max(1, dv.getUint32(12, true));
+        const width = Math.max(1, dv.getUint32(16, true));
+        const pfFlags = dv.getUint32(80, true);
+        const fourCC = dv.getUint32(84, true);
+        const rgbBitCount = dv.getUint32(88, true);
+        const rMask = dv.getUint32(92, true);
+        const gMask = dv.getUint32(96, true);
+        const bMask = dv.getUint32(100, true);
+        const aMask = dv.getUint32(104, true);
 
         let dataOffset = 128;
-        let effectiveFourCC = fourCC;
+        let rgba;
+        let formatLabel = 'DDS';
 
         if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DX10) {
-            if (arrayBuffer.byteLength < 148) {
-                throw new Error('Header DDS DX10 terpotong.');
+            if (src.length < 148) {
+                throw new Error('Header DX10 pada file DDS tidak lengkap.');
             }
-            const dxgiFormat = view.getUint32(128, true);
+            const dxgiFormat = dv.getUint32(128, true);
             dataOffset = 148;
-            if (dxgiFormat === 71 || dxgiFormat === 72) effectiveFourCC = FOURCC_DXT1;
-            else if (dxgiFormat === 74 || dxgiFormat === 75) effectiveFourCC = FOURCC_DXT3;
-            else if (dxgiFormat === 77 || dxgiFormat === 78) effectiveFourCC = FOURCC_DXT5;
-            else if (dxgiFormat === 28 || dxgiFormat === 29 || dxgiFormat === 87) effectiveFourCC = 0;
-            else throw new Error('DXGI format DDS tidak didukung: ' + dxgiFormat);
-        }
 
-        const payload = new Uint8Array(arrayBuffer, dataOffset);
-        let rgba = null;
-        let formatLabel = 'RGBA';
-
-        if (pfFlags & DDPF_FOURCC) {
-            if (effectiveFourCC === FOURCC_DXT1) {
-                rgba = decodeDXT1(payload, width, height);
-                formatLabel = 'DXT1';
-            } else if (effectiveFourCC === FOURCC_DXT3) {
-                rgba = decodeDXT3(payload, width, height);
-                formatLabel = 'DXT3';
-            } else if (effectiveFourCC === FOURCC_DXT5) {
-                rgba = decodeDXT5(payload, width, height);
-                formatLabel = 'DXT5';
-            } else if (effectiveFourCC === 0) {
-                rgba = decodeUncompressedRGBA(payload, width, height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000);
-                formatLabel = 'DX10-RGBA';
+            if (dxgiFormat === 98 || dxgiFormat === 97) {
+                rgba = decodeBc7ToRgba(src, width, height, dataOffset, dxgiFormat === 98);
+                formatLabel = 'DXGI_BC7_' + dxgiFormat;
+            } else if (dxgiFormat === 71 || dxgiFormat === 72) {
+                rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
+                formatLabel = 'DXGI_BC1';
+            } else if (dxgiFormat === 77 || dxgiFormat === 78) {
+                rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+                formatLabel = 'DXGI_BC3';
             } else {
-                throw new Error('Kompresi DDS FourCC tidak didukung (gunakan DXT1/DXT3/DXT5/RGBA).');
+                throw new Error('DXGI format DDS tidak didukung: ' + dxgiFormat);
             }
-        } else if (pfFlags & DDPF_RGB) {
-            rgba = decodeUncompressedRGBA(
-                payload,
-                width,
-                height,
-                rgbBitCount || 32,
-                rMask,
-                gMask,
-                bMask,
-                (pfFlags & DDPF_ALPHAPIXELS) ? aMask : 0
-            );
-            formatLabel = 'RGB' + (rgbBitCount || 32);
+        } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT1) {
+            rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT1';
+        } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT3) {
+            rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT3';
+        } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT5) {
+            rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT5';
         } else {
-            throw new Error('Pixel format DDS tidak didukung.');
+            rgba = decodeUncompressedToRgba(src, width, height, dataOffset, pfFlags, rgbBitCount, rMask, gMask, bMask, aMask);
+            formatLabel = 'RGBA_' + rgbBitCount;
         }
 
-        const scaled = downscaleRgbaIfNeeded(rgba, width, height, MAX_TEX_DIM);
-        return {
-            rgba: scaled.data,
-            width: scaled.width,
-            height: scaled.height,
-            originalWidth: width,
-            originalHeight: height,
-            format: formatLabel
-        };
-    }
-
-    function createPlayCanvasTextureFromDds(graphicsDevice, arrayBuffer, name) {
-        if (!graphicsDevice || typeof pc === 'undefined' || !pc.Texture) {
-            throw new Error('GraphicsDevice PlayCanvas belum siap.');
-        }
-        const decoded = parseDdsBuffer(arrayBuffer);
         const tex = new pc.Texture(graphicsDevice, {
-            name: name || 'dds_texture',
-            width: decoded.width,
-            height: decoded.height,
-            format: pc.PIXELFORMAT_R8_G8_B8_A8,
-            mipmaps: true,
-            minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+            width: width,
+            height: height,
+            format: pc.PIXELFORMAT_RGBA8,
+            mipmaps: false,
+            minFilter: pc.FILTER_LINEAR,
             magFilter: pc.FILTER_LINEAR,
             addressU: pc.ADDRESS_REPEAT,
             addressV: pc.ADDRESS_REPEAT
         });
 
-        const levels = tex.lock();
-        if (levels && levels.set) {
-            levels.set(decoded.rgba);
-        } else if (Array.isArray(levels) && levels[0] && levels[0].set) {
-            levels[0].set(decoded.rgba);
-        }
+        const lockBuf = tex.lock();
+        lockBuf.set(rgba.subarray(0, Math.min(rgba.length, lockBuf.length)));
         tex.unlock();
-        if (typeof tex.upload === 'function') {
-            tex.upload();
-        }
-        tex._vtfDdsFormat = decoded.format;
+        tex._vtfDdsFormat = formatLabel;
+        tex.name = fileName || 'dds_texture';
         return tex;
     }
 
     window.VtfDdsLoader = {
-        parseDdsBuffer: parseDdsBuffer,
-        createTexture: createPlayCanvasTextureFromDds
+        createTexture: createTextureFromArrayBuffer
     };
 })();
