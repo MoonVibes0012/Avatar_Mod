@@ -4,6 +4,33 @@
 (function () {
     'use strict';
 
+    function getAppSafe() {
+        if (typeof window.getPcApp === 'function') {
+            const a = window.getPcApp();
+            if (a) return a;
+        }
+        return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
+    }
+
+    function getStateSafe() {
+        if (typeof window.S !== 'undefined' && window.S) return window.S;
+        try {
+            if (typeof S !== 'undefined' && S) return S;
+        } catch (e) {}
+        if (!window.S) {
+            window.S = { objs: [], selected: null, cnt: 1 };
+        }
+        return window.S;
+    }
+
+    function setGlbStatus(msg) {
+        const el = document.getElementById('status');
+        if (el) el.textContent = msg;
+        if (typeof window.dbg === 'function') {
+            try { window.dbg(msg); } catch (e) {}
+        }
+    }
+
     function decodeGlbTextures(gltf, bin, graphicsDevice) {
         const textures = [];
         if (!gltf.images || !bin) return Promise.resolve(textures);
@@ -129,6 +156,7 @@
             if (idx === undefined || !gltf.accessors || !gltf.accessors[idx]) return null;
             const acc = gltf.accessors[idx];
             const bv = gltf.bufferViews[acc.bufferView];
+            if (!bv) return null;
             const off = (bv.byteOffset || 0) + (acc.byteOffset || 0);
             const compMap = {
                 5120: Int8Array,
@@ -169,16 +197,29 @@
     }
 
     function importGLB(file) {
+        const pcApp = getAppSafe();
+        const st = getStateSafe();
+        if (!pcApp || !pcApp.graphicsDevice || !pcApp.root) {
+            const msg = 'Engine PlayCanvas belum siap untuk memuat model.';
+            setGlbStatus('⚠ ' + msg);
+            try { alert(msg); } catch (e) {}
+            return;
+        }
+
         const r = new FileReader();
         r.onload = async (e) => {
             try {
+                setGlbStatus('⏳ Parsing struktur GLB/VRM: ' + file.name + '...');
                 const buf = e.target.result;
                 const d = new DataView(buf);
-                if (d.getUint32(0, true) !== 0x46546C67) {
+                if (buf.byteLength < 20 || d.getUint32(0, true) !== 0x46546C67) {
                     throw new Error('File bukan GLB/VRM valid (magic mismatch)');
                 }
 
                 const jsonLen = d.getUint32(12, true);
+                if (20 + jsonLen > buf.byteLength) {
+                    throw new Error('Panjang chunk JSON GLB tidak valid');
+                }
                 const jsonText = new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen));
                 const gltf = JSON.parse(jsonText);
 
@@ -192,15 +233,17 @@
                 }
 
                 if (gltf.extensionsUsed && gltf.extensionsUsed.includes('KHR_draco_mesh_compression')) {
-                    alert('Model ini menggunakan kompresi Draco yang tidak didukung tanpa decoder terpisah. Mohon export ulang tanpa Draco compression.');
-                    return;
+                    throw new Error('Model memakai kompresi Draco (export ulang tanpa Draco)');
                 }
 
-                const textures = await decodeGlbTextures(gltf, bin, app.graphicsDevice);
+                setGlbStatus('⏳ Memuat tekstur & material: ' + file.name + '...');
+                const textures = await decodeGlbTextures(gltf, bin, pcApp.graphicsDevice);
                 const materials = buildGlbMaterials(gltf, textures);
                 const getAcc = createAccessorReader(gltf, bin);
 
-                const rootEnt = new pc.Entity(file.name.replace(/\.(glb|vrm|gltf)$/i, '') + '_' + (S.cnt++));
+                st.cnt = st.cnt || 1;
+                st.objs = st.objs || [];
+                const rootEnt = new pc.Entity(file.name.replace(/\.(glb|vrm|gltf)$/i, '') + '_' + (st.cnt++));
                 const allPositions = [], allIndices = [], allUvs = [], allNormals = [];
                 let vtxOffset = 0;
 
@@ -215,7 +258,9 @@
 
                 nodes.forEach((n, i) => {
                     if (n.children) {
-                        n.children.forEach((c) => nodeEntities[i].addChild(nodeEntities[c]));
+                        n.children.forEach((c) => {
+                            if (nodeEntities[c]) nodeEntities[i].addChild(nodeEntities[c]);
+                        });
                     }
                 });
 
@@ -224,7 +269,9 @@
                     ? gltf.scenes[sceneIdx].nodes
                     : [];
                 if (rootNodes.length > 0) {
-                    rootNodes.forEach((rn) => rootEnt.addChild(nodeEntities[rn]));
+                    rootNodes.forEach((rn) => {
+                        if (nodeEntities[rn]) rootEnt.addChild(nodeEntities[rn]);
+                    });
                 } else {
                     nodeEntities.forEach((ne, i) => {
                         if (!nodes.some((n) => n.children && n.children.includes(i))) {
@@ -234,10 +281,10 @@
                 }
 
                 const skins = (gltf.skins || []).map((sk) => {
-                    const bones = (sk.joints || []).map((j) => nodeEntities[j]);
+                    const bones = (sk.joints || []).map((j) => nodeEntities[j]).filter(Boolean);
                     const ibmArr = sk.inverseBindMatrices !== undefined ? getAcc(sk.inverseBindMatrices) : null;
                     const ibms = [];
-                    if (ibmArr) {
+                    if (ibmArr && ibmArr.length >= bones.length * 16) {
                         for (let i = 0; i < bones.length; i++) {
                             const m = new pc.Mat4();
                             m.data.set(ibmArr.subarray(i * 16, i * 16 + 16));
@@ -246,7 +293,7 @@
                     } else {
                         bones.forEach(() => ibms.push(new pc.Mat4()));
                     }
-                    const skin = new pc.Skin(app.graphicsDevice, ibms, bones.map((b) => b.name));
+                    const skin = new pc.Skin(pcApp.graphicsDevice, ibms, bones.map((b) => b.name));
                     return { skin: skin, bones: bones };
                 });
 
@@ -262,17 +309,20 @@
 
                         (meshDef.primitives || []).forEach((prim) => {
                             const pos = getAcc(prim.attributes.POSITION);
-                            if (!pos) return;
+                            if (!pos || pos.length === 0) return;
                             const norm = getAcc(prim.attributes.NORMAL);
                             const uv = getAcc(prim.attributes.TEXCOORD_0);
                             const idx = prim.indices !== undefined ? getAcc(prim.indices) : null;
                             const joints = getAcc(prim.attributes.JOINTS_0);
                             const weights = getAcc(prim.attributes.WEIGHTS_0);
 
-                            const mesh = new pc.Mesh(app.graphicsDevice);
+                            const mesh = new pc.Mesh(pcApp.graphicsDevice);
                             mesh.setPositions(pos);
-                            if (norm) mesh.setNormals(norm);
-                            else mesh.setNormals(pc.calculateNormals(pos, idx || Array.from({ length: pos.length / 3 }, (_, k) => k)));
+                            if (norm) {
+                                mesh.setNormals(norm);
+                            } else {
+                                mesh.setNormals(pc.calculateNormals(pos, idx || Array.from({ length: pos.length / 3 }, (_, k) => k)));
+                            }
                             if (uv) mesh.setUvs(0, uv);
                             if (joints && weights) {
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, joints, 4, pc.TYPE_UINT8, false);
@@ -292,7 +342,7 @@
                                         deltaNormals: dNorm
                                     });
                                 });
-                                mesh.morph = new pc.Morph(targets, app.graphicsDevice);
+                                mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
                                 morphInst = new pc.MorphInstance(mesh.morph);
                                 hasMorphs = true;
                                 morphTargetsList.push({ meshInstance: null, morphInstance: morphInst, names: targets.map((t) => t.name) });
@@ -373,23 +423,33 @@
                     normals: allNormals
                 };
                 rootEnt._isGLB = true;
-                if (typeof meshCachePool !== 'undefined') meshCachePool.push(rootEnt._meshCache);
+                if (!Array.isArray(window.meshCachePool)) window.meshCachePool = [];
+                window.meshCachePool.push(rootEnt._meshCache);
 
-                app.root.addChild(rootEnt);
-                S.objs.push(rootEnt);
-                selectObject(rootEnt);
-                updateTree();
-                saveState();
+                pcApp.root.addChild(rootEnt);
+                st.objs.push(rootEnt);
 
-                document.getElementById('status').textContent =
-                    '✓ Model Imported: ' + file.name + (hasMorphs ? ` (${rootEnt._morphNames.length} morphs)` : '');
-                if (typeof dbg === 'function') {
-                    dbg(`✓ GLB/VRM loaded: ${file.name}, scale=${normScale.toFixed(3)}, vtx=${allPositions.length / 3}`);
-                }
+                if (typeof window.selectObject === 'function') window.selectObject(rootEnt);
+                else if (typeof selectObject === 'function') selectObject(rootEnt);
+                if (typeof window.updateTree === 'function') window.updateTree();
+                else if (typeof updateTree === 'function') updateTree();
+                if (typeof window.saveState === 'function') window.saveState();
+                else if (typeof saveState === 'function') saveState();
+
+                setGlbStatus(
+                    '✓ Model Imported: ' + file.name + (hasMorphs ? ` (${rootEnt._morphNames.length} morphs)` : '')
+                );
             } catch (err) {
+                const msg = 'Gagal import GLB/VRM: ' + (err && err.message ? err.message : err);
                 console.error('GLB Import Error:', err);
-                alert('Gagal import GLB/VRM: ' + err.message);
+                setGlbStatus('⚠ ' + msg);
+                try { alert(msg); } catch (e) {}
             }
+        };
+        r.onerror = function () {
+            const msg = 'Gagal membaca file GLB/VRM dari penyimpanan.';
+            setGlbStatus('⚠ ' + msg);
+            try { alert(msg); } catch (e) {}
         };
         r.readAsArrayBuffer(file);
     }
