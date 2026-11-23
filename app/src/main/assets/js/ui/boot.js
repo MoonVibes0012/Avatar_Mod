@@ -30,13 +30,14 @@
             topBar.style.setProperty('top', '0', 'important');
             topBar.style.setProperty('left', '0', 'important');
             topBar.style.setProperty('right', '0', 'important');
-            topBar.style.setProperty('z-index', '40', 'important');
+            topBar.style.setProperty('z-index', '60', 'important');
             topBar.style.setProperty('display', 'flex', 'important');
             topBar.style.flexWrap = 'wrap';
             topBar.style.alignItems = 'center';
             topBar.style.gap = '4px';
             topBar.style.padding = '6px';
-            topBar.style.background = 'rgba(15, 19, 28, 0.9)';
+            topBar.style.background = 'rgba(15, 19, 28, 0.92)';
+            topBar.style.setProperty('pointer-events', 'auto', 'important');
         }
 
         ['left', 'right'].forEach((id) => {
@@ -47,8 +48,8 @@
             panel.style.setProperty('bottom', '28px', 'important');
             panel.style.setProperty('width', '275px', 'important');
             panel.style.setProperty('max-width', '84vw', 'important');
-            panel.style.setProperty('z-index', '35', 'important');
-            panel.style.background = 'rgba(16, 20, 30, 0.95)';
+            panel.style.setProperty('z-index', '55', 'important');
+            panel.style.background = 'rgba(16, 20, 30, 0.96)';
             panel.style.color = '#eef4ff';
             panel.style.overflowY = 'auto';
             panel.style.setProperty('pointer-events', 'auto', 'important');
@@ -61,9 +62,9 @@
             statusEl.style.position = 'fixed';
             statusEl.style.left = '8px';
             statusEl.style.bottom = '6px';
-            statusEl.style.zIndex = '40';
+            statusEl.style.zIndex = '65';
             statusEl.style.pointerEvents = 'none';
-            statusEl.style.background = 'rgba(15, 19, 28, 0.85)';
+            statusEl.style.background = 'rgba(15, 19, 28, 0.88)';
             statusEl.style.color = '#cfe4ff';
             statusEl.style.padding = '3px 8px';
             statusEl.style.borderRadius = '6px';
@@ -96,9 +97,13 @@
             backdrop.hidden = !anyOpen;
             backdrop.style.setProperty('position', 'fixed', 'important');
             backdrop.style.setProperty('inset', '0', 'important');
-            backdrop.style.setProperty('z-index', '30', 'important');
+            backdrop.style.setProperty('z-index', '45', 'important');
             backdrop.style.setProperty('display', anyOpen ? 'block' : 'none', 'important');
         }
+
+        setBootStatus(
+            (panelId === 'left' ? 'Panel MENU: ' : 'Panel INSPECT: ') + (wantOpen ? 'TERBUKA' : 'DITUTUP')
+        );
     }
 
     function togglePanel(panelId) {
@@ -143,51 +148,44 @@
         } catch (e) {}
     }
 
+    function bindDelegatedPanelTriggers() {
+        if (window.__vtfPanelDelegationBound) return;
+        window.__vtfPanelDelegationBound = true;
+
+        document.addEventListener('click', function (e) {
+            const target = e && e.target && typeof e.target.closest === 'function' ? e.target : null;
+            if (!target) return;
+
+            if (target.closest('#parts')) {
+                e.preventDefault();
+                togglePanel('left');
+                return;
+            }
+            if (target.closest('#inspector')) {
+                e.preventDefault();
+                togglePanel('right');
+                return;
+            }
+            const closeBtn = target.closest('.btn-close-panel');
+            if (closeBtn) {
+                e.preventDefault();
+                const panelId = closeBtn.getAttribute('data-panel');
+                if (panelId) setPanelOpen(panelId, false);
+                return;
+            }
+            if (target.closest('#panelBackdrop')) {
+                setPanelOpen('left', false);
+                setPanelOpen('right', false);
+            }
+        }, true);
+    }
+
     function bootUi() {
         ensureBaseUiLayers();
+        bindDelegatedPanelTriggers();
 
         if (typeof window.renderPanelsTemplates === 'function') {
             window.renderPanelsTemplates();
-        }
-
-        const partsBtn = byId('parts');
-        if (partsBtn && partsBtn.dataset.vtfBootBound !== '1') {
-            partsBtn.dataset.vtfBootBound = '1';
-            partsBtn.addEventListener('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                togglePanel('left');
-            });
-        }
-
-        const inspBtn = byId('inspector');
-        if (inspBtn && inspBtn.dataset.vtfBootBound !== '1') {
-            inspBtn.dataset.vtfBootBound = '1';
-            inspBtn.addEventListener('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                togglePanel('right');
-            });
-        }
-
-        document.querySelectorAll('.btn-close-panel').forEach((btn) => {
-            if (btn.dataset.vtfBootBound === '1') return;
-            btn.dataset.vtfBootBound = '1';
-            btn.addEventListener('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                const targetPanel = btn.getAttribute('data-panel');
-                if (targetPanel) setPanelOpen(targetPanel, false);
-            });
-        });
-
-        const backdrop = byId('panelBackdrop');
-        if (backdrop && backdrop.dataset.vtfBootBound !== '1') {
-            backdrop.dataset.vtfBootBound = '1';
-            backdrop.addEventListener('click', function () {
-                setPanelOpen('left', false);
-                setPanelOpen('right', false);
-            });
         }
 
         const debugBtn = byId('btnDebug');
@@ -201,7 +199,7 @@
                 dbgEl.style.position = 'fixed';
                 dbgEl.style.left = '8px';
                 dbgEl.style.bottom = '34px';
-                dbgEl.style.zIndex = '45';
+                dbgEl.style.zIndex = '70';
                 dbgEl.style.maxHeight = '35vh';
                 dbgEl.style.maxWidth = '92vw';
                 dbgEl.style.overflow = 'auto';
