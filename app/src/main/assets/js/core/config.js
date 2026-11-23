@@ -19,10 +19,21 @@
         objects: [],
         mode: 'object',
         maxId: 1,
+        cnt: 0, // Diperlukan untuk group_clone_ops
         isLoadingModel: false,
         isSmoothing: false
     };
     window.S = S;
+
+    // Menyatukan S.objs dan S.objects agar tidak terjadi bentrok properti
+    if (window.S) {
+        if (!window.S.objects) window.S.objects = [];
+        Object.defineProperty(window.S, 'objs', {
+            get() { return this.objects; },
+            set(v) { this.objects = v; },
+            configurable: true
+        });
+    }
 
     if (!Array.isArray(window.undoStack)) {
         window.undoStack = [];
