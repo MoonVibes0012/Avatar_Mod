@@ -179,7 +179,7 @@
                 m.update();
 
                 st.cnt = st.cnt || 1;
-                st.objs = st.objs || [];
+                st.objects = st.objects || []; // PERBAIKAN: Gunakan st.objects
                 const ent = new pc.Entity(file.name.replace(/\.obj$/i, '') + '_' + (st.cnt++));
                 const mat = new pc.StandardMaterial();
                 mat.diffuse = new pc.Color(0.55, 0.45, 0.85);
@@ -200,7 +200,7 @@
                 if (Array.isArray(window.meshCachePool)) window.meshCachePool.push(ent._meshCache);
 
                 pcApp.root.addChild(ent);
-                st.objs.push(ent);
+                st.objects.push(ent); // PERBAIKAN: Gunakan st.objects
                 if (typeof window.selectObject === 'function') window.selectObject(ent);
                 else if (typeof selectObject === 'function') selectObject(ent);
                 if (typeof window.updateTree === 'function') window.updateTree();
