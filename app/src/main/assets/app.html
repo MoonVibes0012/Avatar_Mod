@@ -57,31 +57,34 @@
     <script src="js/face_mesh.js"></script>
     <script src="js/kalidokit.umd.js"></script>
 
-    <!-- Core -->
-    <script src="js/core/state.js"></script>
-    <script src="js/core/utils.js"></script>
+    <!-- Core (Config & Debug Harus Paling Awal) -->
+    <script src="js/core/config.js"></script>
+    <script src="js/core/debug.js"></script>
     <script src="js/core/procedural_motion_loop.js"></script>
     <script src="js/core/init.js"></script>
     <script src="js/core/gpu_context_recovery.js"></script>
     <script src="js/core/gpu_stability.js"></script>
-    <script src="js/core/debug.js"></script>
 
     <!-- Camera & Controls -->
     <script src="js/camera/controls.js"></script>
 
+    <!-- Scene & Serialization (Diperlukan sebelum Entities/IO) -->
+    <script src="js/scene/serialize.js"></script>
+    <script src="js/io/history.js"></script>
+    <script src="js/io/save_load.js"></script>
+
     <!-- Entities & Editing -->
     <script src="js/entities/create.js"></script>
-    <script src="js/entities/bone.js"></script>
+    <script src="js/entities/select.js"></script>
+    <script src="js/entities/split.js"></script>
     <script src="js/entities/group_clone_ops.js"></script>
     <script src="js/entities/operations.js"></script>
-    <script src="js/editing/select.js"></script>
-    <script src="js/editing/split.js"></script>
+    <script src="js/editing/bone.js"></script>
+    <script src="js/editing/smooth.js"></script>
+    <script src="js/editing/vertex.js"></script>
 
-    <!-- Animation & Scene -->
+    <!-- Animation -->
     <script src="js/animation/character_driver.js"></script>
-    <script src="js/scene/serialize.js"></script>
-    <script src="js/scene/history.js"></script>
-    <script src="js/scene/save_load.js"></script>
 
     <!-- IO & Face Tracking -->
     <script src="js/io/dds_loader.js"></script>
@@ -98,11 +101,13 @@
     <script src="js/anatomy/selection_sphere.js"></script>
     <script src="js/anatomy/anatomy_solver.js"></script>
     <script src="js/anatomy/anatomy_poses.js"></script>
+    <script src="js/anatomy/anatomy_expression_link.js"></script>
+    <script src="js/anatomy/anatomy_diagnostics.js"></script>
     <script src="js/anatomy/anatomy_bridge_ui.js"></script>
     <script src="js/anatomy/anatomy_touch_hud_view.js"></script>
     <script src="js/anatomy/anatomy_touch_hud.js"></script>
 
-    <!-- UI -->
+    <!-- UI (Boot harus paling akhir) -->
     <script src="js/ui/panels_template.js"></script>
     <script src="js/ui/expressions.js"></script>
     <script src="js/ui/material_inputs.js"></script>
