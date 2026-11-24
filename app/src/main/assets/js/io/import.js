@@ -81,28 +81,23 @@
             return;
         }
 
+        // Pengecekan awal: wajib ada model terpilih sebelum membaca file DDS.
+        const target = (st && st.selected) ? st.selected : null;
+        if (!target) {
+            notifyImportError('Pilih model (VRM/GLB/Box) terlebih dahulu di layar, baru import file DDS!');
+            return;
+        }
+
         setImportStatus('⏳ Membaca tekstur DDS: ' + file.name + '...');
         const r = new FileReader();
         r.onload = function (ev) {
             try {
                 const buf = ev.target.result;
                 const ddsTex = window.VtfDdsLoader.createTexture(pcApp.graphicsDevice, buf, file.name);
-                let target = (st && st.selected) ? st.selected : null;
 
-                if (!target && typeof window.addObj === 'function') {
-                    target = window.addObj('box');
-                    if (target) {
-                        target.name = file.name.replace(/\.dds$/i, '') + '_DDS';
-                    }
-                } else if (!target && typeof addObj === 'function') {
-                    target = addObj('box');
-                    if (target) {
-                        target.name = file.name.replace(/\.dds$/i, '') + '_DDS';
-                    }
-                }
-
+                // Jangan buat kubus otomatis. Lempar error jika tidak ada model terpilih.
                 if (!target) {
-                    throw new Error('Tidak ada objek target untuk menerapkan tekstur DDS.');
+                    throw new Error('Pilih model (VRM/GLB/Box) terlebih dahulu di layar, baru import file DDS!');
                 }
 
                 const count = applyDdsTextureToEntity(target, ddsTex, file.name);
@@ -179,7 +174,8 @@
                 m.update();
 
                 st.cnt = st.cnt || 1;
-                st.objects = st.objects || []; // PERBAIKAN: Gunakan st.objects
+                // Gunakan st.objects (bukan st.objs) untuk menyimpan objek baru.
+                st.objects = st.objects || [];
                 const ent = new pc.Entity(file.name.replace(/\.obj$/i, '') + '_' + (st.cnt++));
                 const mat = new pc.StandardMaterial();
                 mat.diffuse = new pc.Color(0.55, 0.45, 0.85);
@@ -200,7 +196,7 @@
                 if (Array.isArray(window.meshCachePool)) window.meshCachePool.push(ent._meshCache);
 
                 pcApp.root.addChild(ent);
-                st.objects.push(ent); // PERBAIKAN: Gunakan st.objects
+                st.objects.push(ent);
                 if (typeof window.selectObject === 'function') window.selectObject(ent);
                 else if (typeof selectObject === 'function') selectObject(ent);
                 if (typeof window.updateTree === 'function') window.updateTree();
