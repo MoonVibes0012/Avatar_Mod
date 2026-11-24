@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM / .GLTF (ekstra paranoid terhadap typed arrays)
+// Loader & Builder model .GLB / .VRM (Versi Final: Auto-Pad VEC4 & Typed Array Safe)
 
 (function () {
     'use strict';
@@ -189,7 +189,7 @@
                     if (ibmArr && ibmArr.length >= bones.length * 16) {
                         for (let i = 0; i < bones.length; i++) {
                             const m = new pc.Mat4();
-                            m.data.set(new Float32Array(ibmArr.subarray(i * 16, i * 16 + 16))); // Paranoia: cast ke Float32
+                            m.data.set(new Float32Array(ibmArr.subarray(i * 16, i * 16 + 16)));
                             ibms.push(m);
                         }
                     } else bones.forEach(() => ibms.push(new pc.Mat4()));
@@ -208,6 +208,7 @@
 
                         (meshDef.primitives || []).forEach((prim) => {
                             if (!prim.attributes) return;
+                            
                             const pos = getAcc(prim.attributes.POSITION);
                             if (!pos || pos.length < 3) return;
                             
@@ -220,35 +221,56 @@
 
                             const mesh = new pc.Mesh(pcApp.graphicsDevice);
                             
-                            // 1. POSITIONS (Wajib Float32)
-                            mesh.setPositions(new Float32Array(pos.subarray(0, numVerts * 3)));
+                            // Paksa ukuran POSITION menjadi kelipatan 3
+                            const posArr = new Float32Array(numVerts * 3);
+                            for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
+                            mesh.setPositions(posArr);
                             
-                            // 2. NORMALS (Wajib Float32)
+                            // Paksa ukuran NORMAL menjadi kelipatan 3
                             if (norm && norm.length >= numVerts * 3) {
-                                mesh.setNormals(new Float32Array(norm.subarray(0, numVerts * 3)));
+                                const normArr = new Float32Array(numVerts * 3);
+                                for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
+                                mesh.setNormals(normArr);
                             } else {
                                 const defaultIdx = Array.from({ length: numVerts }, (_, k) => k);
-                                mesh.setNormals(pc.calculateNormals(new Float32Array(pos.subarray(0, numVerts * 3)), idx || defaultIdx));
+                                mesh.setNormals(pc.calculateNormals(posArr, idx || defaultIdx));
                             }
                             
-                            // 3. UVS (Wajib Float32)
+                            // Paksa ukuran UV menjadi kelipatan 2
                             if (uv && uv.length >= numVerts * 2) {
-                                mesh.setUvs(0, new Float32Array(uv.subarray(0, numVerts * 2))); 
+                                const uvArr = new Float32Array(numVerts * 2);
+                                for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
+                                mesh.setUvs(0, uvArr); 
                             }
                             
-                            // 4. BONES / JOINTS (Wajib Uint8 & Float32)
-                            if (joints && weights && joints.length >= numVerts * 4 && weights.length >= numVerts * 4) {
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, new Uint8Array(joints.subarray(0, numVerts * 4)), 4, pc.TYPE_UINT8, false);
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, new Float32Array(weights.subarray(0, numVerts * 4)), 4, pc.TYPE_FLOAT32, false);
+                            // KUNCI PERBAIKAN: Paksa ukuran JOINTS & WEIGHTS menjadi kelipatan 4 (VEC4)
+                            if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
+                                const jArr = new Uint8Array(numVerts * 4); // 4 komponen per vertex
+                                const wArr = new Float32Array(numVerts * 4); 
+                                
+                                for (let v = 0; v < numVerts; v++) {
+                                    // Ambil 3 komponen pertama
+                                    jArr[v * 4]     = joints[v * 3] || 0;
+                                    jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
+                                    jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
+                                    wArr[v * 4]     = weights[v * 3] || 0;
+                                    wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
+                                    wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
+                                    
+                                    // Jika aslinya VEC4, ambil komponen ke-4. Jika tidak, isi 0.
+                                    if (joints.length >= numVerts * 4) jArr[v * 4 + 3] = joints[v * 4 + 3] || 0;
+                                    if (weights.length >= numVerts * 4) wArr[v * 4 + 3] = weights[v * 4 + 3] || 0;
+                                }
+                                mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
+                                mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
                             }
                             
-                            // 5. INDICES (Wajib Uint16 atau Uint32, panjang kelipatan 3)
+                            // Index wajib kelipatan 3 dan tipe integer
                             if (idx && idx.length > 0) {
                                 const triCount = Math.floor(idx.length / 3) * 3;
                                 let maxIdx = 0;
                                 for (let k = 0; k < triCount; k++) { if (idx[k] > maxIdx) maxIdx = idx[k]; }
                                 
-                                // Paksa konversi tipe data index sesuai batas maksimal vertex
                                 if (maxIdx > 65535) {
                                     mesh.setIndices(new Uint32Array(idx.subarray(0, triCount)));
                                 } else {
@@ -256,17 +278,28 @@
                                 }
                             }
 
-                            // 6. MORPH TARGETS
+                            // Morph targets
                             let morphInst = null;
                             if (prim.targets && prim.targets.length > 0) {
                                 const targets = prim.targets.map((t, tIdx) => {
                                     const dPos = getAcc(t.POSITION);
                                     const dNorm = getAcc(t.NORMAL);
                                     const mName = targetNames[tIdx] || `Shape_${tIdx}`;
+                                    
+                                    const dPosArr = new Float32Array(numVerts * 3);
+                                    if (dPos) {
+                                        for (let p = 0; p < Math.min(dPos.length, numVerts * 3); p++) dPosArr[p] = dPos[p];
+                                    }
+                                    
+                                    const dNormArr = new Float32Array(numVerts * 3);
+                                    if (dNorm) {
+                                        for (let p = 0; p < Math.min(dNorm.length, numVerts * 3); p++) dNormArr[p] = dNorm[p];
+                                    }
+
                                     return new pc.MorphTarget({
                                         name: mName,
-                                        deltaPositions: (dPos && dPos.length >= numVerts * 3) ? new Float32Array(dPos.subarray(0, numVerts * 3)) : new Float32Array(numVerts * 3),
-                                        deltaNormals: (dNorm && dNorm.length >= numVerts * 3) ? new Float32Array(dNorm.subarray(0, numVerts * 3)) : null
+                                        deltaPositions: dPosArr,
+                                        deltaNormals: dNorm ? dNormArr : null
                                     });
                                 });
                                 mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
@@ -291,9 +324,9 @@
                             }
                             meshInstances.push(mi);
 
-                            for (let p = 0; p < numVerts * 3; p++) allPositions.push(pos[p]);
-                            if (uv) for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u]);
-                            if (norm) for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm]);
+                            for (let p = 0; p < numVerts * 3; p++) allPositions.push(posArr[p]);
+                            if (uv) for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u] || 0);
+                            if (norm) for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm] || 0);
                             if (idx) {
                                 for (let k = 0; k < idx.length; k++) allIndices.push(idx[k] + vtxOffset);
                             } else {
@@ -345,7 +378,7 @@
                 const msg = 'Gagal import GLB/VRM: ' + (err && err.message ? err.message : err);
                 console.error('GLB Import Error:', err);
                 setGlbStatus('⚠ ' + msg);
-                try { alert(msg); } catch (e) {}
+                alert(msg);
             }
         };
         r.onerror = () => setGlbStatus('⚠ Gagal membaca file dari penyimpanan.');
