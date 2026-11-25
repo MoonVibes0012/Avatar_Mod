@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Aman: Validasi TypedArray, Bounds & Morph/Skin)
+// Loader & Builder model .GLB / .VRM (Versi Aman: Validasi TypedArray, Bounds & Sub-Step Trace)
 
 (function () {
     'use strict';
@@ -348,8 +348,9 @@
                             ? meshDef.extras.targetNames
                             : [];
 
-                        (Array.isArray(meshDef.primitives) ? meshDef.primitives : []).forEach((prim) => {
+                        (Array.isArray(meshDef.primitives) ? meshDef.primitives : []).forEach((prim, pIdx) => {
                             if (!prim || !prim.attributes) return;
+                            let subStep = `prim[${pIdx}].read`;
 
                             const pos = getAcc(prim.attributes.POSITION);
                             if (!pos || pos.length < 3) return;
@@ -363,145 +364,155 @@
                             const joints = prim.attributes.JOINTS_0 !== undefined ? getAcc(prim.attributes.JOINTS_0) : null;
                             const weights = prim.attributes.WEIGHTS_0 !== undefined ? getAcc(prim.attributes.WEIGHTS_0) : null;
 
-                            const mesh = new pc.Mesh(pcApp.graphicsDevice);
+                            try {
+                                subStep = `prim[${pIdx}].pos_norm_uv`;
+                                const mesh = new pc.Mesh(pcApp.graphicsDevice);
 
-                            const posArr = new Float32Array(numVerts * 3);
-                            for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
-                            mesh.setPositions(posArr);
+                                const posArr = new Float32Array(numVerts * 3);
+                                for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
+                                mesh.setPositions(posArr);
 
-                            if (norm && norm.length >= numVerts * 3) {
-                                const normArr = new Float32Array(numVerts * 3);
-                                for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
-                                mesh.setNormals(normArr);
-                            } else {
-                                const defaultIdx = new Uint32Array(numVerts);
-                                for (let k = 0; k < numVerts; k++) defaultIdx[k] = k;
-                                mesh.setNormals(pc.calculateNormals(posArr, idx || defaultIdx));
-                            }
-
-                            if (uv && uv.length >= numVerts * 2) {
-                                const uvArr = new Float32Array(numVerts * 2);
-                                for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
-                                mesh.setUvs(0, uvArr);
-                            }
-
-                            if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
-                                const jArr = new Uint8Array(numVerts * 4);
-                                const wArr = new Float32Array(numVerts * 4);
-                                const has4J = joints.length >= numVerts * 4;
-                                const has4W = weights.length >= numVerts * 4;
-
-                                for (let v = 0; v < numVerts; v++) {
-                                    jArr[v * 4] = joints[v * 3] || 0;
-                                    jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
-                                    jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                                    jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
-
-                                    wArr[v * 4] = weights[v * 3] || 0;
-                                    wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
-                                    wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                                    wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+                                let safeIdxPlain = null;
+                                if (idx && idx.length >= 3) {
+                                    const triCount = Math.floor(idx.length / 3) * 3;
+                                    if (triCount > 0) {
+                                        safeIdxPlain = new Array(triCount);
+                                        for (let k = 0; k < triCount; k++) {
+                                            const iv = idx[k] || 0;
+                                            safeIdxPlain[k] = iv < numVerts ? iv : 0;
+                                        }
+                                    }
                                 }
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
-                                mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
-                            }
 
-                            if (idx && idx.length >= 3) {
-                                const triCount = Math.floor(idx.length / 3) * 3;
-                                if (triCount > 0) {
+                                if (norm && norm.length >= numVerts * 3) {
+                                    const normArr = new Float32Array(numVerts * 3);
+                                    for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
+                                    mesh.setNormals(normArr);
+                                } else {
+                                    const calcIdx = safeIdxPlain || Array.from({ length: numVerts }, (_, k) => k);
+                                    mesh.setNormals(pc.calculateNormals(posArr, calcIdx));
+                                }
+
+                                if (uv && uv.length >= numVerts * 2) {
+                                    const uvArr = new Float32Array(numVerts * 2);
+                                    for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
+                                    mesh.setUvs(0, uvArr);
+                                }
+
+                                subStep = `prim[${pIdx}].skin_stream`;
+                                if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
+                                    const jArr = new Uint8Array(numVerts * 4);
+                                    const wArr = new Float32Array(numVerts * 4);
+                                    const has4J = joints.length >= numVerts * 4;
+                                    const has4W = weights.length >= numVerts * 4;
+
+                                    for (let v = 0; v < numVerts; v++) {
+                                        jArr[v * 4] = joints[v * 3] || 0;
+                                        jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
+                                        jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
+                                        jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+
+                                        wArr[v * 4] = weights[v * 3] || 0;
+                                        wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
+                                        wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
+                                        wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+                                    }
+                                    mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
+                                    mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
+                                }
+
+                                subStep = `prim[${pIdx}].indices`;
+                                if (safeIdxPlain && safeIdxPlain.length >= 3) {
                                     let maxIdx = 0;
-                                    for (let k = 0; k < triCount; k++) {
-                                        const iv = idx[k] || 0;
-                                        if (iv > maxIdx) maxIdx = iv;
+                                    for (let k = 0; k < safeIdxPlain.length; k++) {
+                                        if (safeIdxPlain[k] > maxIdx) maxIdx = safeIdxPlain[k];
                                     }
-
                                     const safeIdx = maxIdx > 65535
-                                        ? new Uint32Array(triCount)
-                                        : new Uint16Array(triCount);
-                                    for (let k = 0; k < triCount; k++) {
-                                        const iv = idx[k] || 0;
-                                        safeIdx[k] = iv < numVerts ? iv : 0;
-                                    }
+                                        ? new Uint32Array(safeIdxPlain)
+                                        : new Uint16Array(safeIdxPlain);
                                     mesh.setIndices(safeIdx);
                                 }
-                            }
 
-                            let morphInst = null;
-                            if (Array.isArray(prim.targets) && prim.targets.length > 0) {
-                                const targets = prim.targets.map((t, tIdx) => {
-                                    const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
-                                    const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
-                                    const mName = targetNames[tIdx] || `Shape_${tIdx}`;
+                                subStep = `prim[${pIdx}].morph`;
+                                let morphInst = null;
+                                if (Array.isArray(prim.targets) && prim.targets.length > 0) {
+                                    const targets = prim.targets.map((t, tIdx) => {
+                                        const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
+                                        const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
+                                        const mName = targetNames[tIdx] || `Shape_${tIdx}`;
 
-                                    const dPosArr = new Float32Array(numVerts * 3);
-                                    if (dPos && dPos.length > 0) {
-                                        const copyLen = Math.min(dPos.length, numVerts * 3);
-                                        for (let p = 0; p < copyLen; p++) dPosArr[p] = dPos[p] || 0;
-                                    }
+                                        const dPosArr = new Float32Array(numVerts * 3);
+                                        if (dPos && dPos.length > 0) {
+                                            const copyLen = Math.min(dPos.length, numVerts * 3);
+                                            for (let p = 0; p < copyLen; p++) dPosArr[p] = dPos[p] || 0;
+                                        }
 
-                                    const dNormArr = new Float32Array(numVerts * 3);
-                                    let hasValidNorm = false;
-                                    if (dNorm && dNorm.length > 0) {
-                                        const copyLen = Math.min(dNorm.length, numVerts * 3);
-                                        for (let p = 0; p < copyLen; p++) dNormArr[p] = dNorm[p] || 0;
-                                        hasValidNorm = true;
-                                    }
+                                        const dNormArr = new Float32Array(numVerts * 3);
+                                        let hasValidNorm = false;
+                                        if (dNorm && dNorm.length > 0) {
+                                            const copyLen = Math.min(dNorm.length, numVerts * 3);
+                                            for (let p = 0; p < copyLen; p++) dNormArr[p] = dNorm[p] || 0;
+                                            hasValidNorm = true;
+                                        }
 
-                                    return new pc.MorphTarget({
-                                        name: mName,
-                                        deltaPositions: dPosArr,
-                                        deltaNormals: hasValidNorm ? dNormArr : null
+                                        return new pc.MorphTarget({
+                                            name: mName,
+                                            deltaPositions: dPosArr,
+                                            deltaNormals: hasValidNorm ? dNormArr : null
+                                        });
                                     });
-                                });
 
-                                if (targets.length > 0) {
-                                    mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
-                                    morphInst = new pc.MorphInstance(mesh.morph);
-                                    hasMorphs = true;
-                                    morphTargetsList.push({
-                                        meshInstance: null,
-                                        morphInstance: morphInst,
-                                        names: targets.map((t) => t.name)
-                                    });
+                                    if (targets.length > 0) {
+                                        mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
+                                        morphInst = new pc.MorphInstance(mesh.morph);
+                                        hasMorphs = true;
+                                        morphTargetsList.push({
+                                            meshInstance: null,
+                                            morphInstance: morphInst,
+                                            names: targets.map((t) => t.name)
+                                        });
+                                    }
                                 }
-                            }
 
-                            mesh.update();
+                                subStep = `prim[${pIdx}].update_cache`;
+                                mesh.update();
 
-                            const mat = (prim.material !== undefined && materials[prim.material])
-                                ? materials[prim.material]
-                                : new pc.StandardMaterial();
-                            const mi = new pc.MeshInstance(mesh, mat);
+                                const mat = (prim.material !== undefined && materials[prim.material])
+                                    ? materials[prim.material]
+                                    : new pc.StandardMaterial();
+                                const mi = new pc.MeshInstance(mesh, mat);
 
-                            if (n.skin !== undefined && skins[n.skin]) {
-                                const skObj = skins[n.skin];
-                                const skinInst = new pc.SkinInstance(skObj.skin);
-                                skinInst.bones = skObj.bones;
-                                mi.skinInstance = skinInst;
-                            }
-                            if (morphInst) {
-                                mi.morphInstance = morphInst;
-                                morphTargetsList[morphTargetsList.length - 1].meshInstance = mi;
-                            }
-                            meshInstances.push(mi);
-
-                            for (let p = 0; p < numVerts * 3; p++) allPositions.push(posArr[p]);
-                            if (uv && uv.length >= numVerts * 2) {
-                                for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u] || 0);
-                            }
-                            if (norm && norm.length >= numVerts * 3) {
-                                for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm] || 0);
-                            }
-                            if (idx && idx.length >= 3) {
-                                const triCount = Math.floor(idx.length / 3) * 3;
-                                for (let k = 0; k < triCount; k++) {
-                                    const iv = idx[k] || 0;
-                                    allIndices.push((iv < numVerts ? iv : 0) + vtxOffset);
+                                if (n.skin !== undefined && skins[n.skin]) {
+                                    const skObj = skins[n.skin];
+                                    const skinInst = new pc.SkinInstance(skObj.skin);
+                                    skinInst.bones = skObj.bones;
+                                    mi.skinInstance = skinInst;
                                 }
-                            } else {
-                                for (let k = 0; k < numVerts; k++) allIndices.push(k + vtxOffset);
+                                if (morphInst) {
+                                    mi.morphInstance = morphInst;
+                                    morphTargetsList[morphTargetsList.length - 1].meshInstance = mi;
+                                }
+                                meshInstances.push(mi);
+
+                                for (let p = 0; p < numVerts * 3; p++) allPositions.push(posArr[p]);
+                                if (uv && uv.length >= numVerts * 2) {
+                                    for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u] || 0);
+                                }
+                                if (norm && norm.length >= numVerts * 3) {
+                                    for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm] || 0);
+                                }
+                                if (safeIdxPlain && safeIdxPlain.length >= 3) {
+                                    for (let k = 0; k < safeIdxPlain.length; k++) {
+                                        allIndices.push(safeIdxPlain[k] + vtxOffset);
+                                    }
+                                } else {
+                                    for (let k = 0; k < numVerts; k++) allIndices.push(k + vtxOffset);
+                                }
+                                vtxOffset += numVerts;
+                            } catch (primErr) {
+                                const pMsg = (primErr && primErr.message) ? primErr.message : String(primErr);
+                                throw new Error(`${subStep} -> ${pMsg}`);
                             }
-                            vtxOffset += numVerts;
                         });
 
                         if (meshInstances.length > 0 && ent) {
