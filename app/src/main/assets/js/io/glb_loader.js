@@ -590,7 +590,22 @@
                                 }
 
                                 subStep = `prim[${pIdx}].update`;
-                                mesh.update();
+                                try {
+                                    mesh.update();
+                                } catch (updErr) {
+                                    // Jika gagal saat morph terpasang, coba lepas morph lalu update ulang
+                                    if (mesh.morph) {
+                                        mesh.morph = null;
+                                        morphInst = null;
+                                        try {
+                                            mesh.update();
+                                        } catch (updErr2) {
+                                            console.warn(`Fallback mesh update pada ${subStep}:`, updErr2);
+                                        }
+                                    } else {
+                                        console.warn(`Fallback mesh update pada ${subStep}:`, updErr);
+                                    }
+                                }
 
                                 const mat = (prim.material !== undefined && materials[prim.material])
                                     ? materials[prim.material]
