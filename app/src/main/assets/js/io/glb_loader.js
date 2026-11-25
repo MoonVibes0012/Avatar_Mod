@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Final: Auto-Pad VEC4 & Typed Array Safe)
+// Loader & Builder model .GLB / .VRM (Versi Aman: Validasi TypedArray, Bounds & Morph/Skin)
 
 (function () {
     'use strict';
@@ -21,45 +21,81 @@
     function setGlbStatus(msg) {
         const el = document.getElementById('status');
         if (el) el.textContent = msg;
-        if (typeof window.dbg === 'function') try { window.dbg(msg); } catch (e) {}
+        if (typeof window.dbg === 'function') {
+            try { window.dbg(msg); } catch (e) {}
+        }
+    }
+
+    function clampByteRange(totalLength, offset, length) {
+        const safeTotal = Math.max(0, Math.floor(Number(totalLength) || 0));
+        const safeOffset = Math.max(0, Math.min(safeTotal, Math.floor(Number(offset) || 0)));
+        const rawLen = Math.max(0, Math.floor(Number(length) || 0));
+        const safeLen = Math.max(0, Math.min(rawLen, safeTotal - safeOffset));
+        return { start: safeOffset, end: safeOffset + safeLen, length: safeLen };
     }
 
     function decodeGlbTextures(gltf, bin, graphicsDevice) {
         const textures = [];
-        if (!gltf.images || !bin) return Promise.resolve(textures);
+        if (!gltf.images || !bin || !bin.buffer) return Promise.resolve(textures);
 
         const tasks = [];
         for (let i = 0; i < gltf.images.length; i++) {
             const imgInfo = gltf.images[i];
-            if (imgInfo.bufferView === undefined || !gltf.bufferViews || !gltf.bufferViews[imgInfo.bufferView]) continue;
-            
-            const bv = gltf.bufferViews[imgInfo.bufferView];
-            const slice = bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + (bv.byteLength || 0));
-            const mime = String(imgInfo.mimeType || 'image/png').toLowerCase();
-            const isDds = mime.includes('dds') || (slice.length >= 4 && slice[0] === 0x44 && slice[1] === 0x44 && slice[2] === 0x53 && slice[3] === 0x20);
+            if (!imgInfo || imgInfo.bufferView === undefined || !gltf.bufferViews || !gltf.bufferViews[imgInfo.bufferView]) {
+                continue;
+            }
 
-            if (isDds && window.VtfDdsLoader) {
+            const bv = gltf.bufferViews[imgInfo.bufferView];
+            const range = clampByteRange(bin.byteLength, bv.byteOffset || 0, bv.byteLength || 0);
+            if (range.length <= 0) continue;
+
+            const slice = bin.subarray(range.start, range.end);
+            const mime = String(imgInfo.mimeType || 'image/png').toLowerCase();
+            const isDds = mime.includes('dds') || (
+                slice.length >= 4 &&
+                slice[0] === 0x44 && slice[1] === 0x44 && slice[2] === 0x53 && slice[3] === 0x20
+            );
+
+            if (isDds && window.VtfDdsLoader && typeof window.VtfDdsLoader.createTexture === 'function') {
                 try {
                     const ddsBuf = slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
                     textures[i] = window.VtfDdsLoader.createTexture(graphicsDevice, ddsBuf, imgInfo.name || 'glb_dds');
-                } catch (e) { console.warn('DDS decode error:', e); }
+                } catch (e) {
+                    console.warn('DDS decode error:', e);
+                }
                 continue;
             }
 
             const texIndex = i;
             tasks.push(new Promise((resolve) => {
-                const blob = new Blob([slice], { type: imgInfo.mimeType || 'image/png' });
-                const url = URL.createObjectURL(blob);
-                const img = new Image();
-                img.onload = () => {
-                    try {
-                        const tex = new pc.Texture(graphicsDevice, { mipmaps: true });
-                        tex.setSource(img);
-                        textures[texIndex] = tex;
-                    } catch (e) {} finally { URL.revokeObjectURL(url); resolve(); }
+                let url = '';
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    if (url) {
+                        try { URL.revokeObjectURL(url); } catch (e) {}
+                    }
+                    resolve();
                 };
-                img.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-                img.src = url;
+
+                try {
+                    const blob = new Blob([slice], { type: imgInfo.mimeType || 'image/png' });
+                    url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = () => {
+                        try {
+                            const tex = new pc.Texture(graphicsDevice, { mipmaps: true });
+                            tex.setSource(img);
+                            textures[texIndex] = tex;
+                        } catch (e) {}
+                        finish();
+                    };
+                    img.onerror = finish;
+                    img.src = url;
+                } catch (e) {
+                    finish();
+                }
             }));
         }
         return Promise.all(tasks).then(() => textures);
@@ -68,16 +104,25 @@
     function buildGlbMaterials(gltf, textures) {
         return (gltf.materials || []).map((m) => {
             const mat = new pc.StandardMaterial();
-            const pbr = m.pbrMetallicRoughness || {};
-            const bc = pbr.baseColorFactor || [1, 1, 1, 1];
+            const pbr = (m && m.pbrMetallicRoughness) ? m.pbrMetallicRoughness : {};
+            const bc = Array.isArray(pbr.baseColorFactor) && pbr.baseColorFactor.length >= 4
+                ? pbr.baseColorFactor
+                : [1, 1, 1, 1];
+
             mat.diffuse = new pc.Color(bc[0], bc[1], bc[2]);
             if (pbr.baseColorTexture && gltf.textures) {
                 const texDef = gltf.textures[pbr.baseColorTexture.index];
-                if (texDef && textures[texDef.source]) mat.diffuseMap = textures[texDef.source];
+                if (texDef && texDef.source !== undefined && textures[texDef.source]) {
+                    mat.diffuseMap = textures[texDef.source];
+                }
             }
             mat.metalness = pbr.metallicFactor !== undefined ? pbr.metallicFactor : 0;
             mat.gloss = 1 - (pbr.roughnessFactor !== undefined ? pbr.roughnessFactor : 0.5);
-            if (m.alphaMode === 'BLEND') { mat.blendType = pc.BLEND_NORMAL; mat.opacity = bc[3]; mat.depthWrite = false; }
+            if (m && m.alphaMode === 'BLEND') {
+                mat.blendType = pc.BLEND_NORMAL;
+                mat.opacity = bc[3];
+                mat.depthWrite = false;
+            }
             mat.update();
             return mat;
         });
@@ -86,38 +131,73 @@
     function createAccessorReader(gltf, bin) {
         return (idx) => {
             if (idx === undefined || idx === null || !gltf.accessors || !gltf.accessors[idx]) return null;
-            if (!bin || !bin.buffer) return null;
+            if (!bin || !bin.buffer || bin.byteLength <= 0) return null;
 
             const acc = gltf.accessors[idx];
             if (acc.bufferView === undefined || !gltf.bufferViews || !gltf.bufferViews[acc.bufferView]) return null;
-            
+
             const bv = gltf.bufferViews[acc.bufferView];
-            const off = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-            const compMap = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
-            const typeMap = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
-            
+            const compMap = {
+                5120: Int8Array,
+                5121: Uint8Array,
+                5122: Int16Array,
+                5123: Uint16Array,
+                5125: Uint32Array,
+                5126: Float32Array
+            };
+            const typeMap = {
+                SCALAR: 1,
+                VEC2: 2,
+                VEC3: 3,
+                VEC4: 4,
+                MAT2: 4,
+                MAT3: 9,
+                MAT4: 16
+            };
+
             const Ctor = compMap[acc.componentType] || Float32Array;
             const numComp = typeMap[acc.type] || 1;
             const bytesPerComp = Ctor.BYTES_PER_ELEMENT;
             const elemBytes = bytesPerComp * numComp;
-            const stride = (bv.byteStride && bv.byteStride > 0) ? bv.byteStride : elemBytes;
-            const count = Math.max(0, Math.floor(acc.count || 0));
+            const stride = (bv.byteStride && bv.byteStride >= elemBytes) ? bv.byteStride : elemBytes;
 
-            const result = new Ctor(count * numComp);
-            if (count === 0 || off < 0) return result;
+            const bvStart = Math.max(0, Math.floor(Number(bv.byteOffset) || 0));
+            const bvLen = bv.byteLength !== undefined
+                ? Math.max(0, Math.floor(Number(bv.byteLength) || 0))
+                : Math.max(0, bin.byteLength - bvStart);
+            const bvRange = clampByteRange(bin.byteLength, bvStart, bvLen);
+
+            const accOff = Math.max(0, Math.floor(Number(acc.byteOffset) || 0));
+            const startInBin = bvRange.start + accOff;
+            const maxBytesInView = Math.max(0, bvRange.end - startInBin);
+
+            const requestedCount = Math.max(0, Math.floor(Number(acc.count) || 0));
+            const maxRowsByBytes = stride > 0 ? Math.floor(maxBytesInView / stride) : 0;
+            const safeCount = Math.min(requestedCount, maxRowsByBytes);
+
+            const outLen = Math.max(0, safeCount * numComp);
+            const result = new Ctor(outLen);
+            if (safeCount <= 0 || outLen <= 0 || startInBin >= bin.byteLength) return result;
 
             const dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
-            for (let i = 0; i < count; i++) {
-                const rowStart = off + i * stride;
-                if (rowStart + elemBytes > bin.byteLength) break;
+            for (let i = 0; i < safeCount; i++) {
+                const rowStart = startInBin + i * stride;
+                if (rowStart < 0 || rowStart + elemBytes > bin.byteLength) break;
+
                 for (let c = 0; c < numComp; c++) {
                     const bytePos = rowStart + c * bytesPerComp;
-                    if (acc.componentType === 5126) result[i * numComp + c] = dv.getFloat32(bytePos, true);
-                    else if (acc.componentType === 5123) result[i * numComp + c] = dv.getUint16(bytePos, true);
-                    else if (acc.componentType === 5125) result[i * numComp + c] = dv.getUint32(bytePos, true);
-                    else if (acc.componentType === 5121) result[i * numComp + c] = dv.getUint8(bytePos);
-                    else if (acc.componentType === 5120) result[i * numComp + c] = dv.getInt8(bytePos);
-                    else if (acc.componentType === 5122) result[i * numComp + c] = dv.getInt16(bytePos, true);
+                    if (bytePos + bytesPerComp > bin.byteLength) break;
+
+                    let val = 0;
+                    if (acc.componentType === 5126) val = dv.getFloat32(bytePos, true);
+                    else if (acc.componentType === 5123) val = dv.getUint16(bytePos, true);
+                    else if (acc.componentType === 5125) val = dv.getUint32(bytePos, true);
+                    else if (acc.componentType === 5121) val = dv.getUint8(bytePos);
+                    else if (acc.componentType === 5120) val = dv.getInt8(bytePos);
+                    else if (acc.componentType === 5122) val = dv.getInt16(bytePos, true);
+                    else val = dv.getFloat32(bytePos, true);
+
+                    result[i * numComp + c] = Number.isFinite(val) ? val : 0;
                 }
             }
             return result;
@@ -127,17 +207,34 @@
     function importGLB(file) {
         const pcApp = getAppSafe();
         const st = getStateSafe();
-        if (!pcApp || !pcApp.graphicsDevice || !pcApp.root) return setGlbStatus('⚠ Engine PlayCanvas belum siap.');
+        if (!pcApp || !pcApp.graphicsDevice || !pcApp.root) {
+            return setGlbStatus('⚠ Engine PlayCanvas belum siap.');
+        }
+        if (!file) {
+            return setGlbStatus('⚠ File model tidak ditemukan.');
+        }
 
+        let stage = 'baca file';
         const r = new FileReader();
         r.onload = async (e) => {
             try {
+                stage = 'parsing header GLB/VRM';
                 setGlbStatus('⏳ Parsing struktur GLB/VRM: ' + file.name + '...');
                 const buf = e.target.result;
+                if (!(buf instanceof ArrayBuffer) || buf.byteLength < 20) {
+                    throw new Error('Buffer file tidak valid atau kosong.');
+                }
+
                 const d = new DataView(buf);
-                if (buf.byteLength < 20 || d.getUint32(0, true) !== 0x46546C67) throw new Error('Bukan file GLB valid.');
+                if (d.getUint32(0, true) !== 0x46546C67) {
+                    throw new Error('Bukan file GLB/VRM biner valid.');
+                }
 
                 const jsonLen = d.getUint32(12, true);
+                if (jsonLen <= 0 || 20 + jsonLen > buf.byteLength) {
+                    throw new Error('Panjang chunk JSON tidak valid.');
+                }
+
                 const jsonText = new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen));
                 const gltf = JSON.parse(jsonText);
 
@@ -146,172 +243,236 @@
                 if (buf.byteLength >= binHeaderOff + 8) {
                     const binLen = d.getUint32(binHeaderOff, true);
                     const binDataOff = binHeaderOff + 8;
-                    bin = new Uint8Array(buf, binDataOff, Math.min(binLen, buf.byteLength - binDataOff));
+                    const binRange = clampByteRange(buf.byteLength, binDataOff, binLen);
+                    if (binRange.length > 0) {
+                        bin = new Uint8Array(buf, binRange.start, binRange.length);
+                    }
                 }
 
                 if (gltf.extensionsUsed && gltf.extensionsUsed.includes('KHR_draco_mesh_compression')) {
                     throw new Error('Model memakai kompresi Draco. Harap export ulang tanpa Draco.');
                 }
 
+                stage = 'decode tekstur & material';
                 setGlbStatus('⏳ Memuat tekstur & material...');
                 const textures = await decodeGlbTextures(gltf, bin, pcApp.graphicsDevice);
                 const materials = buildGlbMaterials(gltf, textures);
                 const getAcc = createAccessorReader(gltf, bin);
 
+                stage = 'membangun node & hierarki';
                 st.cnt = st.cnt || 1;
                 st.objects = st.objects || [];
                 const rootEnt = new pc.Entity(file.name.replace(/\.(glb|vrm|gltf)$/i, '') + '_' + (st.cnt++));
-                const allPositions = [], allIndices = [], allUvs = [], allNormals = [];
+                const allPositions = [];
+                const allIndices = [];
+                const allUvs = [];
+                const allNormals = [];
                 let vtxOffset = 0;
 
-                const nodes = gltf.nodes || [];
+                const nodes = Array.isArray(gltf.nodes) ? gltf.nodes : [];
                 const nodeEntities = nodes.map((n, i) => {
-                    const ent = new pc.Entity(n.name || 'Node_' + i);
-                    if (n.translation) ent.setLocalPosition(...n.translation);
-                    if (n.rotation) ent.setLocalRotation(new pc.Quat(...n.rotation));
-                    if (n.scale) ent.setLocalScale(...n.scale);
+                    const ent = new pc.Entity((n && n.name) ? n.name : 'Node_' + i);
+                    if (n && Array.isArray(n.translation) && n.translation.length >= 3) {
+                        ent.setLocalPosition(n.translation[0] || 0, n.translation[1] || 0, n.translation[2] || 0);
+                    }
+                    if (n && Array.isArray(n.rotation) && n.rotation.length >= 4) {
+                        ent.setLocalRotation(new pc.Quat(n.rotation[0] || 0, n.rotation[1] || 0, n.rotation[2] || 0, n.rotation[3] || 1));
+                    }
+                    if (n && Array.isArray(n.scale) && n.scale.length >= 3) {
+                        ent.setLocalScale(n.scale[0] || 1, n.scale[1] || 1, n.scale[2] || 1);
+                    }
                     return ent;
                 });
 
                 nodes.forEach((n, i) => {
-                    if (n.children) n.children.forEach((c) => { if (nodeEntities[c]) nodeEntities[i].addChild(nodeEntities[c]); });
+                    if (n && Array.isArray(n.children)) {
+                        n.children.forEach((c) => {
+                            if (nodeEntities[c] && nodeEntities[i] !== nodeEntities[c]) {
+                                nodeEntities[i].addChild(nodeEntities[c]);
+                            }
+                        });
+                    }
                 });
 
                 const sceneIdx = gltf.scene !== undefined ? gltf.scene : 0;
-                const rootNodes = (gltf.scenes && gltf.scenes[sceneIdx] && gltf.scenes[sceneIdx].nodes) ? gltf.scenes[sceneIdx].nodes : [];
-                if (rootNodes.length > 0) rootNodes.forEach((rn) => { if (nodeEntities[rn]) rootEnt.addChild(nodeEntities[rn]); });
-                else nodeEntities.forEach((ne, i) => { if (!nodes.some((n) => n.children && n.children.includes(i))) rootEnt.addChild(ne); });
+                const rootNodes = (gltf.scenes && gltf.scenes[sceneIdx] && Array.isArray(gltf.scenes[sceneIdx].nodes))
+                    ? gltf.scenes[sceneIdx].nodes
+                    : [];
+                if (rootNodes.length > 0) {
+                    rootNodes.forEach((rn) => {
+                        if (nodeEntities[rn]) rootEnt.addChild(nodeEntities[rn]);
+                    });
+                } else {
+                    nodeEntities.forEach((ne, i) => {
+                        if (!nodes.some((n) => n && Array.isArray(n.children) && n.children.includes(i))) {
+                            rootEnt.addChild(ne);
+                        }
+                    });
+                }
 
-                const skins = (gltf.skins || []).map((sk) => {
-                    const bones = (sk.joints || []).map((j) => nodeEntities[j]).filter(Boolean);
-                    const ibmArr = sk.inverseBindMatrices !== undefined ? getAcc(sk.inverseBindMatrices) : null;
+                stage = 'membangun skin & tulang';
+                const skins = (Array.isArray(gltf.skins) ? gltf.skins : []).map((sk) => {
+                    const bones = (Array.isArray(sk && sk.joints) ? sk.joints : [])
+                        .map((j) => nodeEntities[j])
+                        .filter(Boolean);
+                    const ibmArr = (sk && sk.inverseBindMatrices !== undefined) ? getAcc(sk.inverseBindMatrices) : null;
                     const ibms = [];
                     if (ibmArr && ibmArr.length >= bones.length * 16) {
                         for (let i = 0; i < bones.length; i++) {
                             const m = new pc.Mat4();
-                            m.data.set(new Float32Array(ibmArr.subarray(i * 16, i * 16 + 16)));
+                            const slice16 = ibmArr.subarray(i * 16, i * 16 + 16);
+                            const f32 = new Float32Array(16);
+                            for (let k = 0; k < 16; k++) f32[k] = slice16[k] || 0;
+                            m.data.set(f32);
                             ibms.push(m);
                         }
-                    } else bones.forEach(() => ibms.push(new pc.Mat4()));
-                    return { skin: new pc.Skin(pcApp.graphicsDevice, ibms, bones.map((b) => b.name)), bones: bones };
+                    } else {
+                        bones.forEach(() => ibms.push(new pc.Mat4()));
+                    }
+                    return {
+                        skin: new pc.Skin(pcApp.graphicsDevice, ibms, bones.map((b) => b.name)),
+                        bones: bones
+                    };
                 });
 
                 let hasMorphs = false;
                 const morphTargetsList = [];
 
+                stage = 'membangun mesh & morph target';
                 nodes.forEach((n, i) => {
-                    if (n.mesh !== undefined && gltf.meshes && gltf.meshes[n.mesh]) {
+                    if (n && n.mesh !== undefined && Array.isArray(gltf.meshes) && gltf.meshes[n.mesh]) {
                         const meshDef = gltf.meshes[n.mesh];
                         const ent = nodeEntities[i];
                         const meshInstances = [];
-                        const targetNames = (meshDef.extras && meshDef.extras.targetNames) ? meshDef.extras.targetNames : [];
+                        const targetNames = (meshDef.extras && Array.isArray(meshDef.extras.targetNames))
+                            ? meshDef.extras.targetNames
+                            : [];
 
-                        (meshDef.primitives || []).forEach((prim) => {
-                            if (!prim.attributes) return;
-                            
+                        (Array.isArray(meshDef.primitives) ? meshDef.primitives : []).forEach((prim) => {
+                            if (!prim || !prim.attributes) return;
+
                             const pos = getAcc(prim.attributes.POSITION);
                             if (!pos || pos.length < 3) return;
-                            
+
                             const numVerts = Math.floor(pos.length / 3);
-                            const norm = getAcc(prim.attributes.NORMAL);
-                            const uv = getAcc(prim.attributes.TEXCOORD_0);
+                            if (numVerts <= 0) return;
+
+                            const norm = prim.attributes.NORMAL !== undefined ? getAcc(prim.attributes.NORMAL) : null;
+                            const uv = prim.attributes.TEXCOORD_0 !== undefined ? getAcc(prim.attributes.TEXCOORD_0) : null;
                             const idx = prim.indices !== undefined ? getAcc(prim.indices) : null;
-                            const joints = getAcc(prim.attributes.JOINTS_0);
-                            const weights = getAcc(prim.attributes.WEIGHTS_0);
+                            const joints = prim.attributes.JOINTS_0 !== undefined ? getAcc(prim.attributes.JOINTS_0) : null;
+                            const weights = prim.attributes.WEIGHTS_0 !== undefined ? getAcc(prim.attributes.WEIGHTS_0) : null;
 
                             const mesh = new pc.Mesh(pcApp.graphicsDevice);
-                            
-                            // Paksa ukuran POSITION menjadi kelipatan 3
+
                             const posArr = new Float32Array(numVerts * 3);
                             for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
                             mesh.setPositions(posArr);
-                            
-                            // Paksa ukuran NORMAL menjadi kelipatan 3
+
                             if (norm && norm.length >= numVerts * 3) {
                                 const normArr = new Float32Array(numVerts * 3);
                                 for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
                                 mesh.setNormals(normArr);
                             } else {
-                                const defaultIdx = Array.from({ length: numVerts }, (_, k) => k);
+                                const defaultIdx = new Uint32Array(numVerts);
+                                for (let k = 0; k < numVerts; k++) defaultIdx[k] = k;
                                 mesh.setNormals(pc.calculateNormals(posArr, idx || defaultIdx));
                             }
-                            
-                            // Paksa ukuran UV menjadi kelipatan 2
+
                             if (uv && uv.length >= numVerts * 2) {
                                 const uvArr = new Float32Array(numVerts * 2);
                                 for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
-                                mesh.setUvs(0, uvArr); 
+                                mesh.setUvs(0, uvArr);
                             }
-                            
-                            // KUNCI PERBAIKAN: Paksa ukuran JOINTS & WEIGHTS menjadi kelipatan 4 (VEC4)
+
                             if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
-                                const jArr = new Uint8Array(numVerts * 4); // 4 komponen per vertex
-                                const wArr = new Float32Array(numVerts * 4); 
-                                
+                                const jArr = new Uint8Array(numVerts * 4);
+                                const wArr = new Float32Array(numVerts * 4);
+                                const has4J = joints.length >= numVerts * 4;
+                                const has4W = weights.length >= numVerts * 4;
+
                                 for (let v = 0; v < numVerts; v++) {
-                                    // Ambil 3 komponen pertama
-                                    jArr[v * 4]     = joints[v * 3] || 0;
+                                    jArr[v * 4] = joints[v * 3] || 0;
                                     jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
                                     jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                                    wArr[v * 4]     = weights[v * 3] || 0;
+                                    jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+
+                                    wArr[v * 4] = weights[v * 3] || 0;
                                     wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
                                     wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                                    
-                                    // Jika aslinya VEC4, ambil komponen ke-4. Jika tidak, isi 0.
-                                    if (joints.length >= numVerts * 4) jArr[v * 4 + 3] = joints[v * 4 + 3] || 0;
-                                    if (weights.length >= numVerts * 4) wArr[v * 4 + 3] = weights[v * 4 + 3] || 0;
+                                    wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
                                 }
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
                                 mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
                             }
-                            
-                            // Index wajib kelipatan 3 dan tipe integer
-                            if (idx && idx.length > 0) {
+
+                            if (idx && idx.length >= 3) {
                                 const triCount = Math.floor(idx.length / 3) * 3;
-                                let maxIdx = 0;
-                                for (let k = 0; k < triCount; k++) { if (idx[k] > maxIdx) maxIdx = idx[k]; }
-                                
-                                if (maxIdx > 65535) {
-                                    mesh.setIndices(new Uint32Array(idx.subarray(0, triCount)));
-                                } else {
-                                    mesh.setIndices(new Uint16Array(idx.subarray(0, triCount)));
+                                if (triCount > 0) {
+                                    let maxIdx = 0;
+                                    for (let k = 0; k < triCount; k++) {
+                                        const iv = idx[k] || 0;
+                                        if (iv > maxIdx) maxIdx = iv;
+                                    }
+
+                                    const safeIdx = maxIdx > 65535
+                                        ? new Uint32Array(triCount)
+                                        : new Uint16Array(triCount);
+                                    for (let k = 0; k < triCount; k++) {
+                                        const iv = idx[k] || 0;
+                                        safeIdx[k] = iv < numVerts ? iv : 0;
+                                    }
+                                    mesh.setIndices(safeIdx);
                                 }
                             }
 
-                            // Morph targets
                             let morphInst = null;
-                            if (prim.targets && prim.targets.length > 0) {
+                            if (Array.isArray(prim.targets) && prim.targets.length > 0) {
                                 const targets = prim.targets.map((t, tIdx) => {
-                                    const dPos = getAcc(t.POSITION);
-                                    const dNorm = getAcc(t.NORMAL);
+                                    const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
+                                    const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
                                     const mName = targetNames[tIdx] || `Shape_${tIdx}`;
-                                    
+
                                     const dPosArr = new Float32Array(numVerts * 3);
-                                    if (dPos) {
-                                        for (let p = 0; p < Math.min(dPos.length, numVerts * 3); p++) dPosArr[p] = dPos[p];
+                                    if (dPos && dPos.length > 0) {
+                                        const copyLen = Math.min(dPos.length, numVerts * 3);
+                                        for (let p = 0; p < copyLen; p++) dPosArr[p] = dPos[p] || 0;
                                     }
-                                    
+
                                     const dNormArr = new Float32Array(numVerts * 3);
-                                    if (dNorm) {
-                                        for (let p = 0; p < Math.min(dNorm.length, numVerts * 3); p++) dNormArr[p] = dNorm[p];
+                                    let hasValidNorm = false;
+                                    if (dNorm && dNorm.length > 0) {
+                                        const copyLen = Math.min(dNorm.length, numVerts * 3);
+                                        for (let p = 0; p < copyLen; p++) dNormArr[p] = dNorm[p] || 0;
+                                        hasValidNorm = true;
                                     }
 
                                     return new pc.MorphTarget({
                                         name: mName,
                                         deltaPositions: dPosArr,
-                                        deltaNormals: dNorm ? dNormArr : null
+                                        deltaNormals: hasValidNorm ? dNormArr : null
                                     });
                                 });
-                                mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
-                                morphInst = new pc.MorphInstance(mesh.morph);
-                                hasMorphs = true;
-                                morphTargetsList.push({ meshInstance: null, morphInstance: morphInst, names: targets.map((t) => t.name) });
+
+                                if (targets.length > 0) {
+                                    mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
+                                    morphInst = new pc.MorphInstance(mesh.morph);
+                                    hasMorphs = true;
+                                    morphTargetsList.push({
+                                        meshInstance: null,
+                                        morphInstance: morphInst,
+                                        names: targets.map((t) => t.name)
+                                    });
+                                }
                             }
 
                             mesh.update();
 
-                            const mat = (prim.material !== undefined && materials[prim.material]) ? materials[prim.material] : new pc.StandardMaterial();
+                            const mat = (prim.material !== undefined && materials[prim.material])
+                                ? materials[prim.material]
+                                : new pc.StandardMaterial();
                             const mi = new pc.MeshInstance(mesh, mat);
+
                             if (n.skin !== undefined && skins[n.skin]) {
                                 const skObj = skins[n.skin];
                                 const skinInst = new pc.SkinInstance(skObj.skin);
@@ -325,43 +486,65 @@
                             meshInstances.push(mi);
 
                             for (let p = 0; p < numVerts * 3; p++) allPositions.push(posArr[p]);
-                            if (uv) for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u] || 0);
-                            if (norm) for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm] || 0);
-                            if (idx) {
-                                for (let k = 0; k < idx.length; k++) allIndices.push(idx[k] + vtxOffset);
+                            if (uv && uv.length >= numVerts * 2) {
+                                for (let u = 0; u < numVerts * 2; u++) allUvs.push(uv[u] || 0);
+                            }
+                            if (norm && norm.length >= numVerts * 3) {
+                                for (let nm = 0; nm < numVerts * 3; nm++) allNormals.push(norm[nm] || 0);
+                            }
+                            if (idx && idx.length >= 3) {
+                                const triCount = Math.floor(idx.length / 3) * 3;
+                                for (let k = 0; k < triCount; k++) {
+                                    const iv = idx[k] || 0;
+                                    allIndices.push((iv < numVerts ? iv : 0) + vtxOffset);
+                                }
                             } else {
                                 for (let k = 0; k < numVerts; k++) allIndices.push(k + vtxOffset);
                             }
                             vtxOffset += numVerts;
                         });
 
-                        if (meshInstances.length > 0) {
+                        if (meshInstances.length > 0 && ent) {
                             ent.addComponent('render', { type: 'asset' });
                             ent.render.meshInstances = meshInstances;
                         }
                     }
                 });
 
-                if (allPositions.length === 0) throw new Error('Tidak ada data mesh ditemukan.');
+                if (allPositions.length === 0) {
+                    throw new Error('Tidak ada data mesh ditemukan.');
+                }
 
                 if (hasMorphs && morphTargetsList.length > 0) {
                     rootEnt._morphInstance = morphTargetsList[0].morphInstance;
                     rootEnt._morphNames = morphTargetsList[0].names;
                 }
 
-                let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+                stage = 'normalisasi & memasukkan ke scene';
+                let minX = Infinity, minY = Infinity, minZ = Infinity;
+                let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
                 for (let i = 0; i < allPositions.length; i += 3) {
                     const x = allPositions[i], y = allPositions[i + 1], z = allPositions[i + 2];
                     if (x < minX) minX = x; if (x > maxX) maxX = x;
                     if (y < minY) minY = y; if (y > maxY) maxY = y;
                     if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
                 }
-                const sizeY = maxY - minY;
-                const normScale = (sizeY > 0.001) ? (2.0 / sizeY) : 1.0;
-                rootEnt.setLocalScale(normScale, normScale, normScale);
-                rootEnt.setPosition(-(minX + maxX) * 0.5 * normScale, -minY * normScale, -(minZ + maxZ) * 0.5 * normScale);
 
-                rootEnt._meshCache = { positions: allPositions, indices: allIndices, uvs: allUvs, normals: allNormals };
+                const sizeY = maxY - minY;
+                const normScale = (Number.isFinite(sizeY) && sizeY > 0.001) ? (2.0 / sizeY) : 1.0;
+                rootEnt.setLocalScale(normScale, normScale, normScale);
+                rootEnt.setPosition(
+                    -((minX + maxX) * 0.5) * normScale,
+                    -minY * normScale,
+                    -((minZ + maxZ) * 0.5) * normScale
+                );
+
+                rootEnt._meshCache = {
+                    positions: allPositions,
+                    indices: allIndices,
+                    uvs: allUvs,
+                    normals: allNormals
+                };
                 rootEnt._isGLB = true;
                 if (!Array.isArray(window.meshCachePool)) window.meshCachePool = [];
                 window.meshCachePool.push(rootEnt._meshCache);
@@ -375,13 +558,16 @@
 
                 setGlbStatus('✓ Model Imported: ' + file.name);
             } catch (err) {
-                const msg = 'Gagal import GLB/VRM: ' + (err && err.message ? err.message : err);
+                const detail = (err && err.message) ? err.message : String(err);
+                const msg = `Gagal import GLB/VRM [${stage}]: ${detail}`;
                 console.error('GLB Import Error:', err);
                 setGlbStatus('⚠ ' + msg);
                 alert(msg);
             }
         };
-        r.onerror = () => setGlbStatus('⚠ Gagal membaca file dari penyimpanan.');
+        r.onerror = () => {
+            setGlbStatus('⚠ Gagal membaca file dari penyimpanan.');
+        };
         r.readAsArrayBuffer(file);
     }
 
