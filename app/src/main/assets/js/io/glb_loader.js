@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Aman: Validasi TypedArray, Bounds & Sub-Step Trace)
+// Loader & Builder model .GLB / .VRM (Versi Aman: Isolasi Morph Update & Bounds)
 
 (function () {
     'use strict';
@@ -433,49 +433,61 @@
                                     mesh.setIndices(safeIdx);
                                 }
 
+                                subStep = `prim[${pIdx}].update_base`;
+                                mesh.update(true, false);
+
                                 subStep = `prim[${pIdx}].morph`;
                                 let morphInst = null;
                                 if (Array.isArray(prim.targets) && prim.targets.length > 0) {
-                                    const targets = prim.targets.map((t, tIdx) => {
-                                        const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
-                                        const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
-                                        const mName = targetNames[tIdx] || `Shape_${tIdx}`;
+                                    try {
+                                        const targets = prim.targets.map((t, tIdx) => {
+                                            const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
+                                            const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
+                                            const mName = targetNames[tIdx] || `Shape_${tIdx}`;
 
-                                        const dPosArr = new Float32Array(numVerts * 3);
-                                        if (dPos && dPos.length > 0) {
-                                            const copyLen = Math.min(dPos.length, numVerts * 3);
-                                            for (let p = 0; p < copyLen; p++) dPosArr[p] = dPos[p] || 0;
-                                        }
+                                            const dPosArr = new Float32Array(numVerts * 3);
+                                            if (dPos && dPos.length > 0) {
+                                                const copyLen = Math.min(dPos.length, numVerts * 3);
+                                                for (let p = 0; p < copyLen; p++) dPosArr[p] = dPos[p] || 0;
+                                            }
 
-                                        const dNormArr = new Float32Array(numVerts * 3);
-                                        let hasValidNorm = false;
-                                        if (dNorm && dNorm.length > 0) {
-                                            const copyLen = Math.min(dNorm.length, numVerts * 3);
-                                            for (let p = 0; p < copyLen; p++) dNormArr[p] = dNorm[p] || 0;
-                                            hasValidNorm = true;
-                                        }
+                                            const dNormArr = new Float32Array(numVerts * 3);
+                                            let hasValidNorm = false;
+                                            if (dNorm && dNorm.length > 0) {
+                                                const copyLen = Math.min(dNorm.length, numVerts * 3);
+                                                for (let p = 0; p < copyLen; p++) dNormArr[p] = dNorm[p] || 0;
+                                                hasValidNorm = true;
+                                            }
 
-                                        return new pc.MorphTarget({
-                                            name: mName,
-                                            deltaPositions: dPosArr,
-                                            deltaNormals: hasValidNorm ? dNormArr : null
+                                            return new pc.MorphTarget({
+                                                name: mName,
+                                                deltaPositions: dPosArr,
+                                                deltaNormals: hasValidNorm ? dNormArr : null
+                                            });
                                         });
-                                    });
 
-                                    if (targets.length > 0) {
-                                        mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
-                                        morphInst = new pc.MorphInstance(mesh.morph);
-                                        hasMorphs = true;
-                                        morphTargetsList.push({
-                                            meshInstance: null,
-                                            morphInstance: morphInst,
-                                            names: targets.map((t) => t.name)
-                                        });
+                                        if (targets.length > 0) {
+                                            mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
+                                            subStep = `prim[${pIdx}].update_morph`;
+                                            mesh.update(false, true);
+                                            morphInst = new pc.MorphInstance(mesh.morph);
+                                            hasMorphs = true;
+                                            morphTargetsList.push({
+                                                meshInstance: null,
+                                                morphInstance: morphInst,
+                                                names: targets.map((t) => t.name)
+                                            });
+                                        }
+                                    } catch (morphErr) {
+                                        console.warn(`Morph dilewati pada ${subStep}:`, morphErr);
+                                        mesh.morph = null;
+                                        morphInst = null;
+                                        try { mesh.update(); } catch (uErr) {}
                                     }
+                                } else {
+                                    subStep = `prim[${pIdx}].update_final`;
+                                    mesh.update();
                                 }
-
-                                subStep = `prim[${pIdx}].update_cache`;
-                                mesh.update();
 
                                 const mat = (prim.material !== undefined && materials[prim.material])
                                     ? materials[prim.material]
