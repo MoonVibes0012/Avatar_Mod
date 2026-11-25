@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Fix Skin boneNames Index Shift & VRM MToon/WebView Textures)
+// Loader & Builder model .GLB / .VRM (Fix Skin boneNames Crash & VRM MToon/WebView Textures)
 
 (function () {
     'use strict';
@@ -304,6 +304,45 @@
         };
     }
 
+    function buildSingleMesh(gd, numVerts, posArr, normArr, uvArr, safeIdx, joints, weights, includeSkinStream) {
+        const mesh = new pc.Mesh(gd);
+        mesh.setPositions(posArr);
+        mesh.setNormals(normArr);
+        if (uvArr) {
+            mesh.setUvs(0, uvArr);
+        }
+
+        let skinStreamAttached = false;
+        if (includeSkinStream && joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
+            const jArr = new Uint8Array(numVerts * 4);
+            const wArr = new Float32Array(numVerts * 4);
+            const has4J = joints.length >= numVerts * 4;
+            const has4W = weights.length >= numVerts * 4;
+
+            for (let v = 0; v < numVerts; v++) {
+                jArr[v * 4] = joints[v * 3] || 0;
+                jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
+                jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
+                jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+
+                wArr[v * 4] = weights[v * 3] || 0;
+                wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
+                wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
+                wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+            }
+            mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
+            mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
+            skinStreamAttached = true;
+        }
+
+        if (safeIdx && safeIdx.length >= 3) {
+            mesh.setIndices(safeIdx);
+        }
+
+        mesh.update();
+        return { mesh: mesh, skinStreamAttached: skinStreamAttached };
+    }
+
     function importGLB(file) {
         const pcApp = getAppSafe();
         const st = getStateSafe();
@@ -413,7 +452,6 @@
                 }
 
                 stage = 'membangun skin & tulang';
-                // JANGAN pakai .filter(Boolean) di sini agar indeks skins[skIdx] tetap 1:1 dengan glTF!
                 const skins = (Array.isArray(gltf.skins) ? gltf.skins : []).map((sk) => {
                     const bones = (Array.isArray(sk && sk.joints) ? sk.joints : [])
                         .map((j) => nodeEntities[j])
@@ -482,12 +520,9 @@
                             const weights = prim.attributes.WEIGHTS_0 !== undefined ? getAcc(prim.attributes.WEIGHTS_0) : null;
 
                             try {
-                                subStep = `prim[${pIdx}].pos_norm_uv`;
-                                const mesh = new pc.Mesh(pcApp.graphicsDevice);
-
+                                subStep = `prim[${pIdx}].prep_buffers`;
                                 const posArr = new Float32Array(numVerts * 3);
                                 for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
-                                mesh.setPositions(posArr);
 
                                 let safeIdxPlain = null;
                                 if (idx && idx.length >= 3) {
@@ -501,59 +536,85 @@
                                     }
                                 }
 
+                                let normArr = null;
                                 if (norm && norm.length >= numVerts * 3) {
-                                    const normArr = new Float32Array(numVerts * 3);
+                                    normArr = new Float32Array(numVerts * 3);
                                     for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
-                                    mesh.setNormals(normArr);
                                 } else {
                                     const calcIdx = safeIdxPlain || Array.from({ length: numVerts }, (_, k) => k);
-                                    mesh.setNormals(pc.calculateNormals(posArr, calcIdx));
+                                    normArr = pc.calculateNormals(posArr, calcIdx);
                                 }
 
+                                let uvArr = null;
                                 if (uv && uv.length >= numVerts * 2) {
-                                    const uvArr = new Float32Array(numVerts * 2);
+                                    uvArr = new Float32Array(numVerts * 2);
                                     for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
-                                    mesh.setUvs(0, uvArr);
                                 }
 
-                                subStep = `prim[${pIdx}].skin_stream`;
-                                let hasSkinStream = false;
-                                if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
-                                    const jArr = new Uint8Array(numVerts * 4);
-                                    const wArr = new Float32Array(numVerts * 4);
-                                    const has4J = joints.length >= numVerts * 4;
-                                    const has4W = weights.length >= numVerts * 4;
-
-                                    for (let v = 0; v < numVerts; v++) {
-                                        jArr[v * 4] = joints[v * 3] || 0;
-                                        jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
-                                        jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                                        jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
-
-                                        wArr[v * 4] = weights[v * 3] || 0;
-                                        wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
-                                        wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                                        wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
-                                    }
-                                    mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
-                                    mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
-                                    hasSkinStream = true;
-                                }
-
-                                subStep = `prim[${pIdx}].indices`;
+                                let safeIdx = null;
                                 if (safeIdxPlain && safeIdxPlain.length >= 3) {
                                     let maxIdx = 0;
                                     for (let k = 0; k < safeIdxPlain.length; k++) {
                                         if (safeIdxPlain[k] > maxIdx) maxIdx = safeIdxPlain[k];
                                     }
-                                    const safeIdx = (maxIdx > 65535 || safeIdxPlain.length % 2 !== 0)
+                                    safeIdx = (maxIdx > 65535 || safeIdxPlain.length % 2 !== 0)
                                         ? new Uint32Array(safeIdxPlain)
                                         : new Uint16Array(safeIdxPlain);
-                                    mesh.setIndices(safeIdx);
+                                }
+
+                                // Cek apakah node ini punya skin valid sebelum memasang stream skinning
+                                const skObj = (n.skin !== undefined && skins[n.skin] && skins[n.skin].skin && skins[n.skin].bones.length > 0)
+                                    ? skins[n.skin]
+                                    : null;
+                                const wantSkinStream = Boolean(skObj && joints && weights);
+
+                                subStep = `prim[${pIdx}].build_mesh`;
+                                let built = null;
+                                try {
+                                    built = buildSingleMesh(pcApp.graphicsDevice, numVerts, posArr, normArr, uvArr, safeIdx, joints, weights, wantSkinStream);
+                                } catch (meshErr) {
+                                    // Jika gagal saat ada skin stream, bangun ulang tanpa skin stream agar mesh tetap dirender
+                                    built = buildSingleMesh(pcApp.graphicsDevice, numVerts, posArr, normArr, uvArr, safeIdx, null, null, false);
+                                }
+
+                                let mesh = built.mesh;
+                                let hasSkinStream = built.skinStreamAttached;
+
+                                const mat = (prim.material !== undefined && materials[prim.material])
+                                    ? materials[prim.material]
+                                    : new pc.StandardMaterial();
+                                let mi = new pc.MeshInstance(mesh, mat);
+
+                                // Ikat SkinInstance dengan aman; jika PlayCanvas menolak atau skin null, rebuild mesh tanpa skin stream
+                                if (hasSkinStream && skObj) {
+                                    let skinBoundOk = false;
+                                    try {
+                                        const skinInst = new pc.SkinInstance(skObj.skin);
+                                        if (!skinInst.skin) skinInst.skin = skObj.skin;
+                                        skinInst.bones = skObj.bones;
+                                        if (typeof skinInst.updateMatrices === 'function') {
+                                            skinInst.updateMatrices();
+                                        }
+                                        if (skinInst.skin && Array.isArray(skinInst.skin.boneNames) && skinInst.skin.boneNames.length > 0) {
+                                            mi.skinInstance = skinInst;
+                                            skinBoundOk = Boolean(mi.skinInstance && mi.skinInstance.skin && mi.skinInstance.skin.boneNames);
+                                        }
+                                    } catch (siErr) {
+                                        skinBoundOk = false;
+                                    }
+
+                                    if (!skinBoundOk) {
+                                        // KRITIS: Jika mesh punya BLENDINDICES/BLENDWEIGHT tapi skinInstance gagal terpasang,
+                                        // PlayCanvas akan crash membaca 'boneNames' setiap frame render!
+                                        // Solusi: bangun ulang mesh statis tanpa skin stream agar model tampil normal.
+                                        const staticBuilt = buildSingleMesh(pcApp.graphicsDevice, numVerts, posArr, normArr, uvArr, safeIdx, null, null, false);
+                                        mesh = staticBuilt.mesh;
+                                        hasSkinStream = false;
+                                        mi = new pc.MeshInstance(mesh, mat);
+                                    }
                                 }
 
                                 subStep = `prim[${pIdx}].morph`;
-                                let morphInst = null;
                                 if (Array.isArray(prim.targets) && prim.targets.length > 0) {
                                     try {
                                         const targets = prim.targets.map((t, tIdx) => {
@@ -584,10 +645,12 @@
 
                                         if (targets.length > 0) {
                                             mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
-                                            morphInst = new pc.MorphInstance(mesh.morph);
+                                            mesh.update();
+                                            const morphInst = new pc.MorphInstance(mesh.morph);
+                                            mi.morphInstance = morphInst;
                                             hasMorphs = true;
                                             morphTargetsList.push({
-                                                meshInstance: null,
+                                                meshInstance: mi,
                                                 morphInstance: morphInst,
                                                 names: targets.map((t) => t.name)
                                             });
@@ -595,51 +658,11 @@
                                     } catch (morphErr) {
                                         console.warn(`Morph dilewati pada ${subStep}:`, morphErr);
                                         mesh.morph = null;
-                                        morphInst = null;
+                                        mi.morphInstance = null;
+                                        try { mesh.update(); } catch (uErr) {}
                                     }
                                 }
 
-                                subStep = `prim[${pIdx}].update`;
-                                try {
-                                    mesh.update();
-                                } catch (updErr) {
-                                    if (mesh.morph) {
-                                        mesh.morph = null;
-                                        morphInst = null;
-                                        try {
-                                            mesh.update();
-                                        } catch (updErr2) {
-                                            console.warn(`Fallback mesh update pada ${subStep}:`, updErr2);
-                                        }
-                                    } else {
-                                        console.warn(`Fallback mesh update pada ${subStep}:`, updErr);
-                                    }
-                                }
-
-                                const mat = (prim.material !== undefined && materials[prim.material])
-                                    ? materials[prim.material]
-                                    : new pc.StandardMaterial();
-                                const mi = new pc.MeshInstance(mesh, mat);
-
-                                // Pasang skinInstance hanya jika skin, bones, dan vertex stream valid agar tidak error 'boneNames'
-                                if (hasSkinStream && n.skin !== undefined && skins[n.skin] && skins[n.skin].skin && skins[n.skin].bones.length > 0) {
-                                    const skObj = skins[n.skin];
-                                    try {
-                                        const skinInst = new pc.SkinInstance(skObj.skin);
-                                        if (!skinInst.skin) skinInst.skin = skObj.skin;
-                                        skinInst.bones = skObj.bones;
-                                        if (skinInst.skin && Array.isArray(skinInst.skin.boneNames) && skinInst.skin.boneNames.length > 0) {
-                                            mi.skinInstance = skinInst;
-                                        }
-                                    } catch (siErr) {
-                                        console.warn('Gagal memasang SkinInstance:', siErr);
-                                    }
-                                }
-
-                                if (morphInst) {
-                                    mi.morphInstance = morphInst;
-                                    morphTargetsList[morphTargetsList.length - 1].meshInstance = mi;
-                                }
                                 meshInstances.push(mi);
 
                                 for (let p = 0; p < numVerts * 3; p++) allPositions.push(posArr[p]);
