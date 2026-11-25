@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Aman: Isolasi Base Streams, Skin & Indices)
+// Loader & Builder model .GLB / .VRM (Versi Final: 4-Byte Aligned Index Buffer & Safe TypedArray)
 
 (function () {
     'use strict';
@@ -431,7 +431,9 @@
                                     for (let k = 0; k < safeIdxPlain.length; k++) {
                                         if (safeIdxPlain[k] > maxIdx) maxIdx = safeIdxPlain[k];
                                     }
-                                    const safeIdx = maxIdx > 65535
+                                    // Wajib kelipatan 4 byte: jika panjang indeks ganjil atau maxIdx > 65535, pakai Uint32Array!
+                                    const needUint32 = (maxIdx > 65535) || (safeIdxPlain.length % 2 !== 0);
+                                    const safeIdx = needUint32
                                         ? new Uint32Array(safeIdxPlain)
                                         : new Uint16Array(safeIdxPlain);
                                     mesh.setIndices(safeIdx);
