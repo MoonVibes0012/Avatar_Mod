@@ -5,11 +5,19 @@
 (function () {
     'use strict';
 
+    /**
+     * Memperbarui teks status pada bar status aplikasi bila elemen tersedia.
+     */
     function setSplitStatus(msg) {
-        const el = document.getElementById('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = document.getElementById('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat log debug ke overlay debug atau konsol browser.
+     */
     function logSplit(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -18,10 +26,15 @@
         }
     }
 
+    /**
+     * Mengambil instance pc.Application aktif secara aman.
+     */
     function getSplitApp() {
         if (typeof window.getPcApp === 'function') {
-            const pcApp = window.getPcApp();
-            if (pcApp) return pcApp;
+            try {
+                const pcApp = window.getPcApp();
+                if (pcApp) return pcApp;
+            } catch (e) {}
         }
         if (typeof window.app !== 'undefined' && window.app) return window.app;
         try {
@@ -30,13 +43,32 @@
         return null;
     }
 
-    function showSplitLoading(show, text) {
-        const ov = document.getElementById('loadingOverlay');
-        const txt = document.getElementById('loadingText');
-        if (txt && text) txt.textContent = text;
-        if (ov) ov.style.display = show ? 'flex' : 'none';
+    /**
+     * Mengambil state scene global `S` secara aman.
+     */
+    function getSplitState() {
+        if (typeof window.S !== 'undefined' && window.S) return window.S;
+        try {
+            if (typeof S !== 'undefined' && S) return S;
+        } catch (e) {}
+        return null;
     }
 
+    /**
+     * Menampilkan atau menyembunyikan overlay loading saat proses split berjalan.
+     */
+    function showSplitLoading(show, text) {
+        try {
+            const ov = document.getElementById('loadingOverlay');
+            const txt = document.getElementById('loadingText');
+            if (txt && text) txt.textContent = text;
+            if (ov) ov.style.display = show ? 'flex' : 'none';
+        } catch (e) {}
+    }
+
+    /**
+     * Menggandakan material mesh dengan fallback material standar yang aman.
+     */
     function cloneSplitMaterial(mat) {
         if (!mat) {
             const fallback = new pc.StandardMaterial();
@@ -58,23 +90,38 @@
         }
     }
 
+    /**
+     * Memisahkan objek statis menjadi beberapa entitas baru berdasarkan connected components.
+     */
     function splitByConnectedComponents() {
         const pcApp = getSplitApp();
-        if (!pcApp || !pcApp.root || !pcApp.graphicsDevice) return alert("Scene belum siap!");
-        if (!S.selected) return alert("Pilih objek dulu!");
+        const st = getSplitState();
+        if (!pcApp || !pcApp.root || !pcApp.graphicsDevice) {
+            setSplitStatus("⚠ Scene belum siap.");
+            return;
+        }
+        if (!st || !st.selected) {
+            setSplitStatus("⚠ Pilih objek dulu sebelum split.");
+            return;
+        }
 
-        const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
+        const renderComp = typeof st.selected.findComponent === 'function' ? st.selected.findComponent('render') : null;
         if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
-            return alert("Objek tidak memiliki mesh!");
+            setSplitStatus("⚠ Objek tidak memiliki mesh.");
+            return;
         }
 
         const hasSkin = renderComp.meshInstances.some(mi => mi && mi.skinInstance != null);
         if (hasSkin) {
-            return alert("Model dengan skeleton (skinned) tidak bisa di-split.\n\nHanya mesh statis yang didukung.");
+            setSplitStatus("⚠ Model skinned tidak bisa di-split.");
+            return;
         }
 
         const mi = renderComp.meshInstances[0];
-        if (!mi || !mi.mesh) return alert("Mesh tidak valid!");
+        if (!mi || !mi.mesh) {
+            setSplitStatus("⚠ Mesh tidak valid.");
+            return;
+        }
 
         try {
             const positions = mi.mesh.getPositions ? mi.mesh.getPositions() : null;
@@ -83,16 +130,11 @@
             const uvs = mi.mesh.getUvs ? mi.mesh.getUvs() : null;
 
             if (!positions || !indices || positions.length === 0 || indices.length < 3) {
-                return alert("Mesh data kosong atau compressed (Draco)!");
+                setSplitStatus("⚠ Mesh data kosong atau compressed.");
+                return;
             }
 
             const vertexCount = Math.floor(positions.length / 3);
-            if (vertexCount > 50000) {
-                if (!confirm("Mesh besar: " + vertexCount + " vertex.\nProses split bisa lama. Lanjutkan?")) {
-                    return;
-                }
-            }
-
             setSplitStatus("Menganalisis connected components...");
             showSplitLoading(true, "Splitting mesh...");
 
@@ -144,16 +186,17 @@
                     if (components.length <= 1) {
                         showSplitLoading(false);
                         setSplitStatus("Mesh hanya memiliki 1 bagian terhubung.");
-                        return alert("Mesh hanya memiliki 1 bagian terhubung.\nTidak ada yang bisa di-split.");
+                        return;
                     }
 
                     logSplit("✅ Ditemukan " + components.length + " connected components");
 
-                    const originalEntity = S.selected;
+                    const originalEntity = st.selected;
                     const originalPos = originalEntity.getPosition();
                     const originalRot = originalEntity.getEulerAngles();
                     const originalScale = originalEntity.getLocalScale();
 
+                    if (!Array.isArray(st.objects)) st.objects = [];
                     const newEntities = [];
 
                     components.forEach((componentVertices, idx) => {
@@ -236,17 +279,17 @@
                         }];
 
                         pcApp.root.addChild(newEntity);
-                        S.objects.push(newEntity);
+                        st.objects.push(newEntity);
                         newEntities.push(newEntity);
 
                         logSplit("✅ Part " + (idx + 1) + ": " + componentVertices.length + " vertices, " + (newIndices.length / 3) + " triangles");
                     });
 
                     const toDelete = originalEntity;
-                    if (typeof selectObject === 'function') selectObject(null);
-                    S.objects = S.objects.filter(o => o !== toDelete);
-                    if (typeof destroyEntity === 'function') {
-                        destroyEntity(toDelete);
+                    if (typeof window.selectObject === 'function') window.selectObject(null);
+                    st.objects = st.objects.filter(o => o !== toDelete);
+                    if (typeof window.destroyEntity === 'function') {
+                        window.destroyEntity(toDelete);
                     } else {
                         try {
                             toDelete.enabled = false;
@@ -257,11 +300,11 @@
                         }
                     }
 
-                    if (typeof saveState === 'function') saveState();
-                    if (typeof updateTree === 'function') updateTree();
+                    if (typeof window.saveState === 'function') window.saveState();
+                    if (typeof window.updateTree === 'function') window.updateTree();
 
-                    if (newEntities.length > 0 && typeof selectObject === 'function') {
-                        selectObject(newEntities[0]);
+                    if (newEntities.length > 0 && typeof window.selectObject === 'function') {
+                        window.selectObject(newEntities[0]);
                     }
 
                     showSplitLoading(false);
@@ -269,101 +312,132 @@
                 } catch (innerErr) {
                     logSplit("Split inner error: " + innerErr.message + "\n" + (innerErr.stack || ""));
                     showSplitLoading(false);
-                    alert("Gagal split mesh: " + innerErr.message);
+                    setSplitStatus("⚠ Gagal split mesh: " + innerErr.message);
                 }
             }, 50);
         } catch (e) {
             logSplit("Split error: " + e.message + "\n" + (e.stack || ""));
             showSplitLoading(false);
-            alert("Gagal split mesh: " + e.message);
+            setSplitStatus("⚠ Gagal split mesh: " + e.message);
         }
     }
     window.splitByConnectedComponents = splitByConnectedComponents;
 
+    /**
+     * Memisahkan multi-material mesh menjadi beberapa entitas baru berdasarkan meshInstance.
+     */
     function splitByMaterial() {
         const pcApp = getSplitApp();
-        if (!pcApp || !pcApp.root) return alert("Scene belum siap!");
-        if (!S.selected) return alert("Pilih objek dulu!");
+        const st = getSplitState();
+        if (!pcApp || !pcApp.root) {
+            setSplitStatus("⚠ Scene belum siap.");
+            return;
+        }
+        if (!st || !st.selected) {
+            setSplitStatus("⚠ Pilih objek dulu sebelum split.");
+            return;
+        }
 
-        const renderComp = typeof S.selected.findComponent === 'function' ? S.selected.findComponent('render') : null;
+        const renderComp = typeof st.selected.findComponent === 'function' ? st.selected.findComponent('render') : null;
         if (!renderComp || !renderComp.meshInstances) {
-            return alert("Objek tidak memiliki mesh!");
+            setSplitStatus("⚠ Objek tidak memiliki mesh.");
+            return;
         }
 
         if (renderComp.meshInstances.length <= 1) {
-            return alert("Mesh hanya memiliki 1 material.\nTidak ada yang bisa di-split berdasarkan material.");
+            setSplitStatus("Mesh hanya memiliki 1 material.");
+            return;
         }
 
         const hasSkin = renderComp.meshInstances.some(mi => mi && mi.skinInstance != null);
         if (hasSkin) {
-            return alert("Model dengan skeleton (skinned) tidak bisa di-split.");
+            setSplitStatus("⚠ Model skinned tidak bisa di-split.");
+            return;
         }
 
-        const originalEntity = S.selected;
-        const originalPos = originalEntity.getPosition();
-        const originalRot = originalEntity.getEulerAngles();
-        const originalScale = originalEntity.getLocalScale();
+        try {
+            const originalEntity = st.selected;
+            const originalPos = originalEntity.getPosition();
+            const originalRot = originalEntity.getEulerAngles();
+            const originalScale = originalEntity.getLocalScale();
 
-        const newEntities = [];
+            if (!Array.isArray(st.objects)) st.objects = [];
+            const newEntities = [];
 
-        renderComp.meshInstances.forEach((mi, idx) => {
-            if (!mi || !mi.mesh) return;
+            renderComp.meshInstances.forEach((mi, idx) => {
+                if (!mi || !mi.mesh) return;
 
-            const newEntity = new pc.Entity((originalEntity.name || "Obj") + '-mat' + (idx + 1));
-            newEntity.addComponent('render', { type: 'asset', castShadows: false });
+                const newEntity = new pc.Entity((originalEntity.name || "Obj") + '-mat' + (idx + 1));
+                newEntity.addComponent('render', { type: 'asset', castShadows: false });
 
-            const newMesh = (typeof cloneMesh === 'function') ? cloneMesh(mi.mesh) : null;
-            if (!newMesh) return;
+                const newMesh = (typeof window.cloneMesh === 'function') ? window.cloneMesh(mi.mesh) : null;
+                if (!newMesh) return;
 
-            const newMat = cloneSplitMaterial(mi.material);
-            const newMi = new pc.MeshInstance(newMesh, newMat);
-            if (typeof pc.BoundingBox !== 'undefined') {
-                newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+                const newMat = cloneSplitMaterial(mi.material);
+                const newMi = new pc.MeshInstance(newMesh, newMat);
+                if (typeof pc.BoundingBox !== 'undefined') {
+                    newMi.aabb = pc.BoundingBox.fromMesh(newMesh);
+                }
+                newEntity.render.meshInstances = [newMi];
+
+                newEntity.setPosition(originalPos.x, originalPos.y, originalPos.z);
+                newEntity.setEulerAngles(originalRot.x, originalRot.y, originalRot.z);
+                newEntity.setLocalScale(originalScale.x, originalScale.y, originalScale.z);
+                newEntity._baseScale = newEntity.getLocalScale().clone();
+                newEntity._baseRot = newEntity.getEulerAngles().clone();
+
+                pcApp.root.addChild(newEntity);
+                st.objects.push(newEntity);
+                newEntities.push(newEntity);
+            });
+
+            const toDelete = originalEntity;
+            if (typeof window.selectObject === 'function') window.selectObject(null);
+            st.objects = st.objects.filter(o => o !== toDelete);
+            if (typeof window.destroyEntity === 'function') {
+                window.destroyEntity(toDelete);
+            } else {
+                try {
+                    toDelete.enabled = false;
+                    if (toDelete.parent) toDelete.parent.removeChild(toDelete);
+                    if (typeof toDelete.destroy === 'function') toDelete.destroy();
+                } catch (err) {
+                    logSplit("Destroy original error: " + err.message);
+                }
             }
-            newEntity.render.meshInstances = [newMi];
 
-            newEntity.setPosition(originalPos.x, originalPos.y, originalPos.z);
-            newEntity.setEulerAngles(originalRot.x, originalRot.y, originalRot.z);
-            newEntity.setLocalScale(originalScale.x, originalScale.y, originalScale.z);
-            newEntity._baseScale = newEntity.getLocalScale().clone();
-            newEntity._baseRot = newEntity.getEulerAngles().clone();
+            if (typeof window.saveState === 'function') window.saveState();
+            if (typeof window.updateTree === 'function') window.updateTree();
 
-            pcApp.root.addChild(newEntity);
-            S.objects.push(newEntity);
-            newEntities.push(newEntity);
-        });
-
-        const toDelete = originalEntity;
-        if (typeof selectObject === 'function') selectObject(null);
-        S.objects = S.objects.filter(o => o !== toDelete);
-        if (typeof destroyEntity === 'function') {
-            destroyEntity(toDelete);
-        } else {
-            try {
-                toDelete.enabled = false;
-                if (toDelete.parent) toDelete.parent.removeChild(toDelete);
-                if (typeof toDelete.destroy === 'function') toDelete.destroy();
-            } catch (err) {
-                logSplit("Destroy original error: " + err.message);
+            if (newEntities.length > 0 && typeof window.selectObject === 'function') {
+                window.selectObject(newEntities[0]);
             }
+
+            setSplitStatus("✓ Mesh di-split menjadi " + newEntities.length + " bagian berdasarkan material");
+        } catch (e) {
+            logSplit("Split by material error: " + e.message);
+            setSplitStatus("⚠ Gagal split berdasarkan material: " + e.message);
         }
-
-        if (typeof saveState === 'function') saveState();
-        if (typeof updateTree === 'function') updateTree();
-
-        if (newEntities.length > 0 && typeof selectObject === 'function') {
-            selectObject(newEntities[0]);
-        }
-
-        setSplitStatus("✓ Mesh di-split menjadi " + newEntities.length + " bagian berdasarkan material");
     }
     window.splitByMaterial = splitByMaterial;
 
-    const splitConnBtn = document.getElementById('splitConnected');
-    if (splitConnBtn) splitConnBtn.onclick = splitByConnectedComponents;
+    /**
+     * Menghubungkan event klik tombol splitConnected dan splitMaterial pada DOM saat ini.
+     */
+    function bindSplitButtons() {
+        try {
+            const splitConnBtn = document.getElementById('splitConnected');
+            if (splitConnBtn) splitConnBtn.onclick = splitByConnectedComponents;
 
-    const splitMatBtn = document.getElementById('splitMaterial');
-    if (splitMatBtn) splitMatBtn.onclick = splitByMaterial;
+            const splitMatBtn = document.getElementById('splitMaterial');
+            if (splitMatBtn) splitMatBtn.onclick = splitByMaterial;
+        } catch (e) {
+            logSplit("bindSplitButtons error: " + e.message);
+        }
+    }
+
+    bindSplitButtons();
+    window.__vtfBindSplitControls = bindSplitButtons;
 
     logSplit("✅ split.js loaded");
 })();
