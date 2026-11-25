@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Aman: Isolasi Morph Update & Bounds)
+// Loader & Builder model .GLB / .VRM (Versi Aman: Isolasi Base Streams, Skin & Indices)
 
 (function () {
     'use strict';
@@ -401,24 +401,28 @@
 
                                 subStep = `prim[${pIdx}].skin_stream`;
                                 if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
-                                    const jArr = new Uint8Array(numVerts * 4);
-                                    const wArr = new Float32Array(numVerts * 4);
-                                    const has4J = joints.length >= numVerts * 4;
-                                    const has4W = weights.length >= numVerts * 4;
+                                    try {
+                                        const jArr = new Uint8Array(numVerts * 4);
+                                        const wArr = new Float32Array(numVerts * 4);
+                                        const has4J = joints.length >= numVerts * 4;
+                                        const has4W = weights.length >= numVerts * 4;
 
-                                    for (let v = 0; v < numVerts; v++) {
-                                        jArr[v * 4] = joints[v * 3] || 0;
-                                        jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
-                                        jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                                        jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+                                        for (let v = 0; v < numVerts; v++) {
+                                            jArr[v * 4] = joints[v * 3] || 0;
+                                            jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
+                                            jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
+                                            jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
 
-                                        wArr[v * 4] = weights[v * 3] || 0;
-                                        wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
-                                        wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                                        wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+                                            wArr[v * 4] = weights[v * 3] || 0;
+                                            wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
+                                            wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
+                                            wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+                                        }
+                                        mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
+                                        mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
+                                    } catch (skinStreamErr) {
+                                        console.warn(`Skin stream dilewati pada ${subStep}:`, skinStreamErr);
                                     }
-                                    mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
-                                    mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
                                 }
 
                                 subStep = `prim[${pIdx}].indices`;
@@ -434,7 +438,7 @@
                                 }
 
                                 subStep = `prim[${pIdx}].update_base`;
-                                mesh.update(true, false);
+                                mesh.update();
 
                                 subStep = `prim[${pIdx}].morph`;
                                 let morphInst = null;
@@ -469,7 +473,7 @@
                                         if (targets.length > 0) {
                                             mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
                                             subStep = `prim[${pIdx}].update_morph`;
-                                            mesh.update(false, true);
+                                            mesh.update();
                                             morphInst = new pc.MorphInstance(mesh.morph);
                                             hasMorphs = true;
                                             morphTargetsList.push({
@@ -484,9 +488,6 @@
                                         morphInst = null;
                                         try { mesh.update(); } catch (uErr) {}
                                     }
-                                } else {
-                                    subStep = `prim[${pIdx}].update_final`;
-                                    mesh.update();
                                 }
 
                                 const mat = (prim.material !== undefined && materials[prim.material])
