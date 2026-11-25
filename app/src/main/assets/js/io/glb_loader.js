@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Versi Final: 4-Byte Aligned Index Buffer & Safe TypedArray)
+// Loader & Builder model .GLB / .VRM (Versi Debug Stream: Isolasi Update per Stream & Dump Array Sizes)[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
 
 (function () {
     'use strict';
@@ -32,6 +32,13 @@
         const rawLen = Math.max(0, Math.floor(Number(length) || 0));
         const safeLen = Math.max(0, Math.min(rawLen, safeTotal - safeOffset));
         return { start: safeOffset, end: safeOffset + safeLen, length: safeLen };
+    }
+
+    function describeArr(arr) {
+        if (!arr) return 'null';
+        const len = arr.length !== undefined ? arr.length : 0;
+        const bl = arr.byteLength !== undefined ? arr.byteLength : len;
+        return `${arr.constructor ? arr.constructor.name : 'Arr'}(len=${len},bytes=${bl})`;
     }
 
     function decodeGlbTextures(gltf, bin, graphicsDevice) {
@@ -364,15 +371,22 @@
                             const joints = prim.attributes.JOINTS_0 !== undefined ? getAcc(prim.attributes.JOINTS_0) : null;
                             const weights = prim.attributes.WEIGHTS_0 !== undefined ? getAcc(prim.attributes.WEIGHTS_0) : null;
 
+                            let posArr = null;
+                            let normArr = null;
+                            let uvArr = null;
+                            let jArr = null;
+                            let wArr = null;
+                            let safeIdx = null;
+                            let safeIdxPlain = null;
+
                             try {
-                                subStep = `prim[${pIdx}].pos_norm_uv`;
+                                subStep = `prim[${pIdx}].pos_norm`;
                                 const mesh = new pc.Mesh(pcApp.graphicsDevice);
 
-                                const posArr = new Float32Array(numVerts * 3);
+                                posArr = new Float32Array(numVerts * 3);
                                 for (let p = 0; p < numVerts * 3; p++) posArr[p] = pos[p] || 0;
                                 mesh.setPositions(posArr);
 
-                                let safeIdxPlain = null;
                                 if (idx && idx.length >= 3) {
                                     const triCount = Math.floor(idx.length / 3) * 3;
                                     if (triCount > 0) {
@@ -385,44 +399,49 @@
                                 }
 
                                 if (norm && norm.length >= numVerts * 3) {
-                                    const normArr = new Float32Array(numVerts * 3);
+                                    normArr = new Float32Array(numVerts * 3);
                                     for (let p = 0; p < numVerts * 3; p++) normArr[p] = norm[p] || 0;
                                     mesh.setNormals(normArr);
                                 } else {
                                     const calcIdx = safeIdxPlain || Array.from({ length: numVerts }, (_, k) => k);
-                                    mesh.setNormals(pc.calculateNormals(posArr, calcIdx));
+                                    normArr = pc.calculateNormals(posArr, calcIdx);
+                                    mesh.setNormals(normArr);
                                 }
 
+                                subStep = `prim[${pIdx}].upd_after_pos_norm`;
+                                mesh.update();
+
+                                subStep = `prim[${pIdx}].uvs`;
                                 if (uv && uv.length >= numVerts * 2) {
-                                    const uvArr = new Float32Array(numVerts * 2);
+                                    uvArr = new Float32Array(numVerts * 2);
                                     for (let p = 0; p < numVerts * 2; p++) uvArr[p] = uv[p] || 0;
                                     mesh.setUvs(0, uvArr);
+                                    subStep = `prim[${pIdx}].upd_after_uvs`;
+                                    mesh.update();
                                 }
 
                                 subStep = `prim[${pIdx}].skin_stream`;
                                 if (joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
-                                    try {
-                                        const jArr = new Uint8Array(numVerts * 4);
-                                        const wArr = new Float32Array(numVerts * 4);
-                                        const has4J = joints.length >= numVerts * 4;
-                                        const has4W = weights.length >= numVerts * 4;
+                                    jArr = new Uint8Array(numVerts * 4);
+                                    wArr = new Float32Array(numVerts * 4);
+                                    const has4J = joints.length >= numVerts * 4;
+                                    const has4W = weights.length >= numVerts * 4;
 
-                                        for (let v = 0; v < numVerts; v++) {
-                                            jArr[v * 4] = joints[v * 3] || 0;
-                                            jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
-                                            jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                                            jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+                                    for (let v = 0; v < numVerts; v++) {
+                                        jArr[v * 4] = joints[v * 3] || 0;
+                                        jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
+                                        jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
+                                        jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
 
-                                            wArr[v * 4] = weights[v * 3] || 0;
-                                            wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
-                                            wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                                            wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
-                                        }
-                                        mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
-                                        mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
-                                    } catch (skinStreamErr) {
-                                        console.warn(`Skin stream dilewati pada ${subStep}:`, skinStreamErr);
+                                        wArr[v * 4] = weights[v * 3] || 0;
+                                        wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
+                                        wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
+                                        wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
                                     }
+                                    mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
+                                    mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
+                                    subStep = `prim[${pIdx}].upd_after_skin`;
+                                    mesh.update();
                                 }
 
                                 subStep = `prim[${pIdx}].indices`;
@@ -431,16 +450,13 @@
                                     for (let k = 0; k < safeIdxPlain.length; k++) {
                                         if (safeIdxPlain[k] > maxIdx) maxIdx = safeIdxPlain[k];
                                     }
-                                    // Wajib kelipatan 4 byte: jika panjang indeks ganjil atau maxIdx > 65535, pakai Uint32Array!
-                                    const needUint32 = (maxIdx > 65535) || (safeIdxPlain.length % 2 !== 0);
-                                    const safeIdx = needUint32
+                                    safeIdx = (maxIdx > 65535 || safeIdxPlain.length % 2 !== 0)
                                         ? new Uint32Array(safeIdxPlain)
                                         : new Uint16Array(safeIdxPlain);
                                     mesh.setIndices(safeIdx);
+                                    subStep = `prim[${pIdx}].upd_after_indices`;
+                                    mesh.update();
                                 }
-
-                                subStep = `prim[${pIdx}].update_base`;
-                                mesh.update();
 
                                 subStep = `prim[${pIdx}].morph`;
                                 let morphInst = null;
@@ -474,7 +490,7 @@
 
                                         if (targets.length > 0) {
                                             mesh.morph = new pc.Morph(targets, pcApp.graphicsDevice);
-                                            subStep = `prim[${pIdx}].update_morph`;
+                                            subStep = `prim[${pIdx}].upd_after_morph`;
                                             mesh.update();
                                             morphInst = new pc.MorphInstance(mesh.morph);
                                             hasMorphs = true;
@@ -526,7 +542,16 @@
                                 vtxOffset += numVerts;
                             } catch (primErr) {
                                 const pMsg = (primErr && primErr.message) ? primErr.message : String(primErr);
-                                throw new Error(`${subStep} -> ${pMsg}`);
+                                const dump = [
+                                    `v=${numVerts}`,
+                                    `pos=${describeArr(posArr)}`,
+                                    `norm=${describeArr(normArr)}`,
+                                    `uv=${describeArr(uvArr)}`,
+                                    `j=${describeArr(jArr)}`,
+                                    `w=${describeArr(wArr)}`,
+                                    `idx=${describeArr(safeIdx)}`
+                                ].join(' | ');
+                                throw new Error(`${subStep} -> ${pMsg} [${dump}]`);
                             }
                         });
 
