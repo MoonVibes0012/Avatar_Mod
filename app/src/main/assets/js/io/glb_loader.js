@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Fix Skin boneNames & VRM MToon/WebView Textures)
+// Loader & Builder model .GLB / .VRM (Fix Skin boneNames Index Shift & VRM MToon/WebView Textures)
 
 (function () {
     'use strict';
@@ -413,6 +413,7 @@
                 }
 
                 stage = 'membangun skin & tulang';
+                // JANGAN pakai .filter(Boolean) di sini agar indeks skins[skIdx] tetap 1:1 dengan glTF!
                 const skins = (Array.isArray(gltf.skins) ? gltf.skins : []).map((sk) => {
                     const bones = (Array.isArray(sk && sk.joints) ? sk.joints : [])
                         .map((j) => nodeEntities[j])
@@ -435,7 +436,16 @@
                     }
 
                     const boneNames = bones.map((b, idx) => b.name || ('Bone_' + idx));
-                    const skinObj = new pc.Skin(pcApp.graphicsDevice, ibms, boneNames);
+                    let skinObj = null;
+                    try {
+                        skinObj = new pc.Skin(pcApp.graphicsDevice, ibms, boneNames);
+                    } catch (skErr) {
+                        console.warn('Gagal membuat pc.Skin:', skErr);
+                        return null;
+                    }
+                    if (!skinObj || !Array.isArray(skinObj.boneNames)) {
+                        return null;
+                    }
                     return {
                         skin: skinObj,
                         bones: bones
@@ -593,7 +603,6 @@
                                 try {
                                     mesh.update();
                                 } catch (updErr) {
-                                    // Jika gagal saat morph terpasang, coba lepas morph lalu update ulang
                                     if (mesh.morph) {
                                         mesh.morph = null;
                                         morphInst = null;
@@ -615,11 +624,15 @@
                                 // Pasang skinInstance hanya jika skin, bones, dan vertex stream valid agar tidak error 'boneNames'
                                 if (hasSkinStream && n.skin !== undefined && skins[n.skin] && skins[n.skin].skin && skins[n.skin].bones.length > 0) {
                                     const skObj = skins[n.skin];
-                                    const skinInst = new pc.SkinInstance(skObj.skin);
-                                    if (!skinInst.skin) skinInst.skin = skObj.skin;
-                                    skinInst.bones = skObj.bones;
-                                    if (skinInst.skin && Array.isArray(skinInst.skin.boneNames)) {
-                                        mi.skinInstance = skinInst;
+                                    try {
+                                        const skinInst = new pc.SkinInstance(skObj.skin);
+                                        if (!skinInst.skin) skinInst.skin = skObj.skin;
+                                        skinInst.bones = skObj.bones;
+                                        if (skinInst.skin && Array.isArray(skinInst.skin.boneNames) && skinInst.skin.boneNames.length > 0) {
+                                            mi.skinInstance = skinInst;
+                                        }
+                                    } catch (siErr) {
+                                        console.warn('Gagal memasang SkinInstance:', siErr);
                                     }
                                 }
 
