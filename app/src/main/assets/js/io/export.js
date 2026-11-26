@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/export.js ===== */
-// Helper download (DebugBridge / AndroidBridge & browser fallback), Export OBJ, dan Screenshot
+// Helper download (AndroidBridge / DebugBridge & browser fallback), Export OBJ, dan Screenshot
 
 (function () {
     'use strict';
@@ -79,11 +79,22 @@
     }
 
     /**
-     * Menyimpan file teks melalui DebugBridge.downloadFile() atau fallback unduhan browser.
+     * Menyimpan file teks melalui AndroidBridge.downloadFile() / DebugBridge.downloadFile() atau fallback browser.
      */
     function downloadNative(filename, content) {
         const safeName = filename || 'export.txt';
         const textStr = String(content || '');
+
+        if (window.AndroidBridge && typeof window.AndroidBridge.downloadFile === 'function') {
+            try {
+                const b64 = utf8TextToBase64(textStr);
+                window.AndroidBridge.downloadFile(safeName, b64, 'text/plain;charset=utf-8');
+                setExportStatus("✓ File disimpan ke Downloads: " + safeName);
+                return;
+            } catch (e) {
+                logExport("AndroidBridge.downloadFile error: " + e.message);
+            }
+        }
 
         if (window.DebugBridge && typeof window.DebugBridge.downloadFile === 'function') {
             try {
@@ -124,12 +135,23 @@
     window.downloadNative = downloadNative;
 
     /**
-     * Menyimpan file biner melalui DebugBridge.downloadFile() atau fallback unduhan browser.
+     * Menyimpan file biner melalui AndroidBridge.downloadFile() / DebugBridge.downloadFile() atau fallback browser.
      */
     function downloadBinary(filename, uint8Array, mimeType) {
         const safeName = filename || 'export.bin';
         const safeMime = mimeType || 'application/octet-stream';
         const bytes = (uint8Array instanceof Uint8Array) ? uint8Array : new Uint8Array(uint8Array);
+
+        if (window.AndroidBridge && typeof window.AndroidBridge.downloadFile === 'function') {
+            try {
+                const base64 = uint8ArrayToBase64(bytes);
+                window.AndroidBridge.downloadFile(safeName, base64, safeMime);
+                setExportStatus("✓ File binary disimpan ke Downloads: " + safeName);
+                return;
+            } catch (e) {
+                logExport("AndroidBridge.downloadFile binary error: " + e.message);
+            }
+        }
 
         if (window.DebugBridge && typeof window.DebugBridge.downloadFile === 'function') {
             try {
