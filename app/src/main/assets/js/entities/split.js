@@ -67,6 +67,75 @@
     }
 
     /**
+     * Menduplikasi objek pc.Mesh beserta posisi, normal, UV, dan indeks segitiga secara aman.
+     */
+    function cloneMesh(srcMesh, explicitDevice) {
+        if (!srcMesh || typeof srcMesh.getPositions !== 'function') return null;
+
+        const pcApp = getSplitApp();
+        const gd = explicitDevice || (pcApp && pcApp.graphicsDevice) || srcMesh.device;
+        if (!gd) return null;
+
+        const positions = srcMesh.getPositions();
+        if (!positions || positions.length < 3) return null;
+
+        const posCopy = new Float32Array(positions);
+        const newMesh = new pc.Mesh(gd);
+        newMesh.setPositions(posCopy);
+
+        if (typeof srcMesh.getNormals === 'function') {
+            const normals = srcMesh.getNormals();
+            if (normals && normals.length >= posCopy.length) {
+                newMesh.setNormals(new Float32Array(normals.subarray(0, posCopy.length)));
+            }
+        }
+
+        if (typeof srcMesh.getUvs === 'function') {
+            const uvs = srcMesh.getUvs(0);
+            const expectedUvLen = Math.floor(posCopy.length / 3) * 2;
+            if (uvs && uvs.length >= expectedUvLen && expectedUvLen > 0) {
+                newMesh.setUvs(0, new Float32Array(uvs.subarray(0, expectedUvLen)));
+            }
+        }
+
+        if (typeof srcMesh.getIndices === 'function') {
+            const rawIndices = srcMesh.getIndices();
+            if (rawIndices && rawIndices.length >= 3) {
+                const triLimit = rawIndices.length - (rawIndices.length % 3);
+                const maxVert = Math.floor(posCopy.length / 3);
+                const cleanIdx = [];
+                let maxUsed = 0;
+
+                for (let i = 0; i < triLimit; i += 3) {
+                    const a = rawIndices[i], b = rawIndices[i + 1], c = rawIndices[i + 2];
+                    if (a >= 0 && b >= 0 && c >= 0 && a < maxVert && b < maxVert && c < maxVert) {
+                        cleanIdx.push(a, b, c);
+                        if (a > maxUsed) maxUsed = a;
+                        if (b > maxUsed) maxUsed = b;
+                        if (c > maxUsed) maxUsed = c;
+                    }
+                }
+
+                if (cleanIdx.length >= 3) {
+                    const idxTyped = maxUsed > 65535
+                        ? new Uint32Array(cleanIdx)
+                        : new Uint16Array(cleanIdx);
+                    newMesh.setIndices(idxTyped);
+                }
+            }
+        }
+
+        if (typeof newMesh.update === 'function') {
+            newMesh.update(pc.PRIMITIVE_TRIANGLES);
+        }
+        return newMesh;
+    }
+
+    if (typeof window.cloneMesh !== 'function') {
+        window.cloneMesh = cloneMesh;
+    }
+
+    /**
      * Menggandakan material mesh dengan fallback material standar yang aman.
      */
     function cloneSplitMaterial(mat) {
@@ -285,6 +354,12 @@
                         logSplit("✅ Part " + (idx + 1) + ": " + componentVertices.length + " vertices, " + (newIndices.length / 3) + " triangles");
                     });
 
+                    if (newEntities.length === 0) {
+                        showSplitLoading(false);
+                        setSplitStatus("⚠ Tidak ada bagian mesh baru yang dapat dibuat.");
+                        return;
+                    }
+
                     const toDelete = originalEntity;
                     if (typeof window.selectObject === 'function') window.selectObject(null);
                     st.objects = st.objects.filter(o => o !== toDelete);
@@ -367,11 +442,13 @@
             renderComp.meshInstances.forEach((mi, idx) => {
                 if (!mi || !mi.mesh) return;
 
+                const newMesh = (typeof window.cloneMesh === 'function')
+                    ? window.cloneMesh(mi.mesh, pcApp.graphicsDevice)
+                    : cloneMesh(mi.mesh, pcApp.graphicsDevice);
+                if (!newMesh) return;
+
                 const newEntity = new pc.Entity((originalEntity.name || "Obj") + '-mat' + (idx + 1));
                 newEntity.addComponent('render', { type: 'asset', castShadows: false });
-
-                const newMesh = (typeof window.cloneMesh === 'function') ? window.cloneMesh(mi.mesh) : null;
-                if (!newMesh) return;
 
                 const newMat = cloneSplitMaterial(mi.material);
                 const newMi = new pc.MeshInstance(newMesh, newMat);
@@ -390,6 +467,11 @@
                 st.objects.push(newEntity);
                 newEntities.push(newEntity);
             });
+
+            if (newEntities.length === 0) {
+                setSplitStatus("⚠ Tidak ada bagian material baru yang dapat dibuat.");
+                return;
+            }
 
             const toDelete = originalEntity;
             if (typeof window.selectObject === 'function') window.selectObject(null);
