@@ -1,13 +1,13 @@
 /* ===== VTuber Forge — js/ui/panels_template.js ===== */
-// Template konten Panel Kiri (#leftBody: Primitif, Scene, Gerak, Ekspresi + Custom, Face Tracking)
-// & Panel Kanan (#rightBody: Transform, Material, Edit Mesh & Bone, Character Driver, Anatomi, Aksi Objek)
+// Template konten Panel Kiri (#leftBody: Primitif, Scene, Gerak, Ekspresi + Morph Slider + Custom, Face Tracking)
+// & Panel Kanan (#rightBody: Mode Edit, Transform, Material, Edit Mesh & Bone, Character Driver, Anatomi, Aksi Objek)
 
 (function () {
     'use strict';
 
     /**
      * Merender isi Panel Kiri (#leftBody) dengan kontrol primitif, file/scene,
-     * animasi, preset ekspresi + ekspresi kustom, face tracking, dan hierarki scene.
+     * animasi, preset ekspresi + slider morph + ekspresi kustom, face tracking, dan hierarki scene.
      */
     function renderLeftPanel(leftBody) {
         if (!leftBody) return;
@@ -31,6 +31,9 @@
                 '    <button type="button" id="loadSceneBtn">Load JSON</button>',
                 '    <button type="button" id="x-obj">Export OBJ</button>',
                 '    <button type="button" id="x-vrm">Export VRM</button>',
+                '  </div>',
+                '  <div class="row" style="margin-top:6px;">',
+                '    <button type="button" id="saveLogBtn" style="flex:1;">📄 Save Debug Log</button>',
                 '  </div>',
                 '</div>',
                 '<div class="sec">',
@@ -59,6 +62,10 @@
                 '    <button type="button" class="expr-btn" data-expr="blink">Blink</button>',
                 '    <button type="button" class="expr-btn" data-expr="neutral" id="resetExprBtn">Reset</button>',
                 '  </div>',
+                '  <div id="morphSection" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12);">',
+                '    <div class="sec-title" style="font-size:10px;margin-bottom:4px;">MORPH / BLENDSHAPE MANUAL</div>',
+                '    <div id="morphControls" style="max-height:160px;overflow-y:auto;padding-right:4px;"></div>',
+                '  </div>',
                 '  <div class="row" style="margin-top:6px;gap:4px;">',
                 '    <input type="text" id="customExprName" placeholder="Nama ekspresi..." style="flex:1;min-width:0;">',
                 '    <button type="button" id="saveCustomExprBtn">Simpan</button>',
@@ -79,13 +86,21 @@
     }
 
     /**
-     * Merender isi Panel Kanan (#rightBody) termasuk kontrol Transform & Fokus Kamera,
+     * Merender isi Panel Kanan (#rightBody) termasuk Mode Switcher, Transform & Fokus Kamera,
      * Material, Edit Mesh & Bone, Character Driver, Anatomi, dan Aksi Objek.
      */
     function renderRightPanel(rightBody) {
         if (!rightBody) return;
         try {
             rightBody.innerHTML = [
+                '<div class="sec">',
+                '  <div class="sec-title">MODE EDITING (<span id="mode">OBJECT</span>)</div>',
+                '  <div class="grid3">',
+                '    <button type="button" data-mode="object" class="on">Object</button>',
+                '    <button type="button" data-mode="vertex">Vertex</button>',
+                '    <button type="button" data-mode="bone">Bone</button>',
+                '  </div>',
+                '</div>',
                 '<div class="sec">',
                 '  <div class="sec-title">TRANSFORM & SNAP</div>',
                 '  <div class="grid2">',
@@ -113,9 +128,9 @@
                 '    <button type="button" id="smooth">Smooth Mesh</button>',
                 '    <button type="button" id="splitConnected">Split Connected</button>',
                 '    <button type="button" id="splitMaterial">Split Material</button>',
-                '    <button type="button" id="btnEditBone" onclick="if(typeof window.setupBoneEditing===\'function\')window.setupBoneEditing();">Edit Bone</button>',
+                '    <button type="button" id="btnEditBone" onclick="if(typeof window.setMode===\'function\')window.setMode(\'bone\');else if(typeof window.setupBoneEditing===\'function\')window.setupBoneEditing();">Edit Bone</button>',
                 '  </div>',
-                '  <div id="vertexEditControls" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12);">',
+                '  <div id="vertexPanel" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12);">',
                 '    <div class="trow"><label>Vertex #</label><input type="range" id="vi" min="0" max="0" step="1" value="0"><span id="viO">0</span></div>',
                 '    <div class="trow"><label>VX</label><input type="number" id="vx" step="0.01" value="0"><span id="vxo">0.00</span></div>',
                 '    <div class="trow"><label>VY</label><input type="number" id="vy" step="0.01" value="0"><span id="vyo">0.00</span></div>',
@@ -174,6 +189,8 @@
             const rightBody = document.getElementById('rightBody');
             if (leftBody) renderLeftPanel(leftBody);
             if (rightBody) renderRightPanel(rightBody);
+            if (typeof window.bindModeButtons === 'function') window.bindModeButtons();
+            if (typeof window.bindSaveLogButton === 'function') window.bindSaveLogButton();
         } catch (err) {
             console.error('Gagal menjalankan renderPanelsTemplates:', err);
         }
