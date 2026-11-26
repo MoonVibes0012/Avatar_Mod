@@ -7,6 +7,8 @@
     let anatomyActive = false;
     let lastWatchedRoot = null;
 
+    const BUILTIN_POSE_IDS = new Set(['rest', 'relaxed', 'wave_r', 'wave_right']);
+
     /**
      * Mengambil elemen DOM berdasarkan ID secara aman.
      */
@@ -110,6 +112,23 @@
     }
 
     /**
+     * Mengambil daftar nama pose kustom dari AnatomyPoses.listPoses() (atau listCustomPoses() bila ada).
+     */
+    function getCustomPoseNamesSafe() {
+        if (!window.AnatomyPoses) return [];
+        if (typeof window.AnatomyPoses.listCustomPoses === 'function') {
+            return window.AnatomyPoses.listCustomPoses() || [];
+        }
+        if (typeof window.AnatomyPoses.listPoses === 'function') {
+            const allPoses = window.AnatomyPoses.listPoses() || [];
+            return allPoses.filter(function (name) {
+                return name && !BUILTIN_POSE_IDS.has(String(name).toLowerCase());
+            });
+        }
+        return [];
+    }
+
+    /**
      * Memperbarui daftar opsi pose kustom dari AnatomyPoses ke dropdown panel.
      */
     function refreshCustomPoseSelect() {
@@ -123,16 +142,45 @@
         defOpt.textContent = '-- Pose Kustom --';
         sel.appendChild(defOpt);
 
-        if (window.AnatomyPoses && typeof window.AnatomyPoses.listCustomPoses === 'function') {
-            const names = window.AnatomyPoses.listCustomPoses();
-            for (let i = 0; i < names.length; i++) {
-                const opt = document.createElement('option');
-                opt.value = names[i];
-                opt.textContent = names[i];
-                sel.appendChild(opt);
-            }
+        const names = getCustomPoseNamesSafe();
+        for (let i = 0; i < names.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = names[i];
+            opt.textContent = names[i];
+            sel.appendChild(opt);
         }
-        if (prev) sel.value = prev;
+        if (prev && names.includes(prev)) sel.value = prev;
+    }
+
+    /**
+     * Menerapkan preset atau pose kustom menggunakan AnatomyPoses.applyPose() dengan fallback aman.
+     */
+    function applyAnatomyPoseByName(poseId) {
+        if (!window.AnatomyPoses || !poseId) return false;
+        if (typeof window.AnatomyPoses.applyPose === 'function') {
+            return !!window.AnatomyPoses.applyPose(poseId);
+        }
+        if (typeof window.AnatomyPoses.applyPreset === 'function') {
+            return !!window.AnatomyPoses.applyPreset(poseId);
+        }
+        if (typeof window.AnatomyPoses.applyCustomPose === 'function') {
+            return !!window.AnatomyPoses.applyCustomPose(poseId);
+        }
+        return false;
+    }
+
+    /**
+     * Menyimpan pose kustom aktif menggunakan AnatomyPoses.savePose() dengan fallback aman.
+     */
+    function saveAnatomyPoseByName(poseName) {
+        if (!window.AnatomyPoses || !poseName) return false;
+        if (typeof window.AnatomyPoses.savePose === 'function') {
+            return !!window.AnatomyPoses.savePose(poseName);
+        }
+        if (typeof window.AnatomyPoses.saveCustomPose === 'function') {
+            return !!window.AnatomyPoses.saveCustomPose(poseName);
+        }
+        return false;
     }
 
     /**
@@ -170,7 +218,7 @@
             '  <div class="grid3">',
             '    <button type="button" data-anat-pose="rest">Rest</button>',
             '    <button type="button" data-anat-pose="relaxed">Relaxed</button>',
-            '    <button type="button" data-anat-pose="wave_right">Wave</button>',
+            '    <button type="button" data-anat-pose="wave_r">Wave</button>',
             '  </div>',
             '  <div class="row" style="margin-top:6px;gap:4px;">',
             '    <input type="text" id="anatCustomPoseName" placeholder="Nama pose..." style="flex:1;min-width:0;">',
@@ -348,14 +396,11 @@
             btn.onclick = function () {
                 const presetId = btn.getAttribute('data-anat-pose');
                 refreshModelAnatomy(false);
-                if (window.AnatomyPoses && typeof window.AnatomyPoses.applyPreset === 'function') {
-                    const ok = window.AnatomyPoses.applyPreset(presetId);
-                    if (ok) {
-                        commitHistorySafe();
-                        setAnatomyStatus('🧍 Preset pose anatomi diterapkan: ' + presetId);
-                    } else {
-                        setAnatomyStatus('⚠ Model anatomi belum siap untuk preset pose.');
-                    }
+                if (applyAnatomyPoseByName(presetId)) {
+                    commitHistorySafe();
+                    setAnatomyStatus('🧍 Preset pose anatomi diterapkan: ' + presetId);
+                } else {
+                    setAnatomyStatus('⚠ Model anatomi belum siap untuk preset pose.');
                 }
             };
         });
@@ -371,14 +416,12 @@
                     return;
                 }
                 refreshModelAnatomy(false);
-                if (window.AnatomyPoses && typeof window.AnatomyPoses.saveCustomPose === 'function') {
-                    if (window.AnatomyPoses.saveCustomPose(poseName)) {
-                        if (inp) inp.value = '';
-                        refreshCustomPoseSelect();
-                        setAnatomyStatus('💾 Pose kustom disimpan: ' + poseName);
-                    } else {
-                        setAnatomyStatus('⚠ Gagal menyimpan pose kustom (pilih model VRM dulu).');
-                    }
+                if (saveAnatomyPoseByName(poseName)) {
+                    if (inp) inp.value = '';
+                    refreshCustomPoseSelect();
+                    setAnatomyStatus('💾 Pose kustom disimpan: ' + poseName);
+                } else {
+                    setAnatomyStatus('⚠ Gagal menyimpan pose kustom (pilih model VRM dulu).');
                 }
             };
         }
@@ -394,13 +437,11 @@
                     return;
                 }
                 refreshModelAnatomy(false);
-                if (window.AnatomyPoses && typeof window.AnatomyPoses.applyCustomPose === 'function') {
-                    if (window.AnatomyPoses.applyCustomPose(poseName)) {
-                        commitHistorySafe();
-                        setAnatomyStatus('▶ Pose kustom dimuat: ' + poseName);
-                    } else {
-                        setAnatomyStatus('⚠ Gagal memuat pose kustom.');
-                    }
+                if (applyAnatomyPoseByName(poseName)) {
+                    commitHistorySafe();
+                    setAnatomyStatus('▶ Pose kustom dimuat: ' + poseName);
+                } else {
+                    setAnatomyStatus('⚠ Gagal memuat pose kustom.');
                 }
             };
         }
