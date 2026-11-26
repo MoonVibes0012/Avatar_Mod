@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Fix Skin boneNames Crash, VRM MToon/WebView Textures, & GLTF Animations)
+// Loader & Builder model .GLB / .VRM (Fix VEC4 Skinning Stride, Standardized _meshCache, VRM Textures, & Animations)
 
 (function () {
     'use strict';
@@ -332,7 +332,7 @@
     }
 
     /**
-     * Membangun objek pc.Mesh tunggal dengan atribut posisi, normal, UV, indeks, dan opsional skin stream.
+     * Membangun objek pc.Mesh tunggal dengan atribut posisi, normal, UV, indeks, dan opsional skin stream (VEC4).
      */
     function buildSingleMesh(gd, numVerts, posArr, normArr, uvArr, safeIdx, joints, weights, includeSkinStream) {
         const mesh = new pc.Mesh(gd);
@@ -346,19 +346,41 @@
         if (includeSkinStream && joints && weights && joints.length >= numVerts * 3 && weights.length >= numVerts * 3) {
             const jArr = new Uint8Array(numVerts * 4);
             const wArr = new Float32Array(numVerts * 4);
-            const has4J = joints.length >= numVerts * 4;
-            const has4W = weights.length >= numVerts * 4;
+            const jStride = joints.length >= numVerts * 4 ? 4 : 3;
+            const wStride = weights.length >= numVerts * 4 ? 4 : 3;
 
             for (let v = 0; v < numVerts; v++) {
-                jArr[v * 4] = joints[v * 3] || 0;
-                jArr[v * 4 + 1] = joints[v * 3 + 1] || 0;
-                jArr[v * 4 + 2] = joints[v * 3 + 2] || 0;
-                jArr[v * 4 + 3] = has4J ? (joints[v * 4 + 3] || 0) : 0;
+                const jb = v * jStride;
+                const wb = v * wStride;
 
-                wArr[v * 4] = weights[v * 3] || 0;
-                wArr[v * 4 + 1] = weights[v * 3 + 1] || 0;
-                wArr[v * 4 + 2] = weights[v * 3 + 2] || 0;
-                wArr[v * 4 + 3] = has4W ? (weights[v * 4 + 3] || 0) : 0;
+                jArr[v * 4] = joints[jb] || 0;
+                jArr[v * 4 + 1] = joints[jb + 1] || 0;
+                jArr[v * 4 + 2] = joints[jb + 2] || 0;
+                jArr[v * 4 + 3] = jStride === 4 ? (joints[jb + 3] || 0) : 0;
+
+                let w0 = Number(weights[wb]) || 0;
+                let w1 = Number(weights[wb + 1]) || 0;
+                let w2 = Number(weights[wb + 2]) || 0;
+                let w3 = wStride === 4 ? (Number(weights[wb + 3]) || 0) : 0;
+
+                const sum = w0 + w1 + w2 + w3;
+                if (sum > 0.00001) {
+                    const inv = 1.0 / sum;
+                    w0 *= inv;
+                    w1 *= inv;
+                    w2 *= inv;
+                    w3 *= inv;
+                } else {
+                    w0 = 1.0;
+                    w1 = 0;
+                    w2 = 0;
+                    w3 = 0;
+                }
+
+                wArr[v * 4] = w0;
+                wArr[v * 4 + 1] = w1;
+                wArr[v * 4 + 2] = w2;
+                wArr[v * 4 + 3] = w3;
             }
             mesh.setVertexStream(pc.SEMANTIC_BLENDINDICES, jArr, 4, pc.TYPE_UINT8, false);
             mesh.setVertexStream(pc.SEMANTIC_BLENDWEIGHT, wArr, 4, pc.TYPE_FLOAT32, false);
@@ -374,8 +396,7 @@
     }
 
     /**
-     * Mengekstrak clip animasi glTF menjadi objek clip yang kompatibel dengan PlayCanvas AnimationComponent
-     * dan mengisi daftar _animAssets / _animNames serta dropdown #animSelect.
+     * Mengekstrak clip animasi glTF menjadi objek clip yang kompatibel dengan PlayCanvas AnimationComponent.
      */
     function extractGlbAnimations(gltf, getAcc, nodeEntities, rootEnt) {
         const animAssets = [];
@@ -451,7 +472,6 @@
                             const s = baseScale.clone();
 
                             tracksForNode.forEach((tr) => {
-                                const idx = Math.min(k, Math.max(0, Math.floor(tr.values.length / 3) - 1));
                                 if (tr.path === 'translation' && tr.values.length >= 3) {
                                     const baseIdx = Math.min(k * 3, tr.values.length - 3);
                                     p.set(tr.values[baseIdx] || 0, tr.values[baseIdx + 1] || 0, tr.values[baseIdx + 2] || 0);
@@ -461,8 +481,6 @@
                                 } else if (tr.path === 'scale' && tr.values.length >= 3) {
                                     const baseIdx = Math.min(k * 3, tr.values.length - 3);
                                     s.set(tr.values[baseIdx] || 1, tr.values[baseIdx + 1] || 1, tr.values[baseIdx + 2] || 1);
-                                } else {
-                                    void idx;
                                 }
                             });
 
@@ -478,7 +496,6 @@
                 }
             }
 
-            // Sediakan objek asset ringan yang kompatibel dengan target.animation.asset dan target.animation.play()
             const assetAdapter = {
                 name: clipName,
                 duration: duration,
@@ -902,15 +919,20 @@
                     -((minZ + maxZ) * 0.5) * normScale
                 );
 
-                rootEnt._meshCache = {
-                    positions: allPositions,
-                    indices: allIndices,
+                // Standarisasi _meshCache ke format Array [{ pos, idx, uvs, normals }] agar kompatibel dengan serialize.js & history.js
+                const cacheEntry = {
+                    pos: allPositions,
+                    idx: allIndices,
                     uvs: allUvs,
                     normals: allNormals
                 };
+                rootEnt._meshCache = [cacheEntry];
                 rootEnt._isGLB = true;
-                if (!Array.isArray(window.meshCachePool)) window.meshCachePool = [];
-                window.meshCachePool.push(rootEnt._meshCache);
+                if (window.meshCachePool && typeof window.meshCachePool.set === 'function') {
+                    window.meshCachePool.set(rootEnt.name, rootEnt._meshCache);
+                } else if (Array.isArray(window.meshCachePool)) {
+                    window.meshCachePool.push(cacheEntry);
+                }
 
                 pcApp.root.addChild(rootEnt);
                 st.objects.push(rootEnt);
