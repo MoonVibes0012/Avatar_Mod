@@ -1,13 +1,10 @@
 /* ===== VTuber Forge — js/io/dds_loader.js ===== */
-// Decoder tekstur .DDS (DXT1, DXT3, DXT5, Uncompressed, DXGI BC7)
+// Decoder tekstur .DDS (DXT1, DXT3, DXT5, serta DXGI BC7 Mode 6)
 
 (function () {
     'use strict';
 
-    const DDS_MAGIC = 0x20534444;
-    const DDPF_ALPHAPIXELS = 0x1;
     const DDPF_FOURCC = 0x4;
-    const DDPF_RGB = 0x40;
 
     const FOURCC_DXT1 = 0x31545844;
     const FOURCC_DXT3 = 0x33545844;
@@ -184,18 +181,12 @@
             }
             return;
         }
-        
-        // Fallback untuk Mode lain (agar tidak crash/glitch parah)
-        const c0 = src[pos] !== undefined ? src[pos] : 160;
-        const c1 = src[pos + 1] !== undefined ? src[pos + 1] : 160;
-        const a0 = src[pos + 2] !== undefined ? src[pos + 2] : 255;
-        for (let i = 0; i < 16; i++) {
-            const v = ((src[pos + 4 + (i >> 2)] >> ((i & 3) * 2)) & 1) ? c1 : c0;
-            outBlockRgba[i * 4] = v;
-            outBlockRgba[i * 4 + 1] = v;
-            outBlockRgba[i * 4 + 2] = v;
-            outBlockRgba[i * 4 + 3] = a0;
-        }
+
+        throw new Error(
+            'Tekstur DDS memakai kompresi BC7 Mode ' + mode +
+            ' yang belum didukung (saat ini hanya mendukung BC7 Mode 6, DXT1, DXT3, dan DXT5). ' +
+            'Silakan simpan ulang tekstur DDS sebagai DXT5/BC3.'
+        );
     }
 
     function decodeBc7ToRgba(src, width, height, offset, isSrgb) {
@@ -230,6 +221,9 @@
 
     function createTextureFromArrayBuffer(graphicsDevice, arrayBuffer, fileName) {
         const src = new Uint8Array(arrayBuffer);
+        if (src.byteLength < 128) {
+            throw new Error('Header file DDS tidak valid atau terlalu pendek.');
+        }
         const dv = new DataView(src.buffer, src.byteOffset, src.byteLength);
         const height = Math.max(1, dv.getUint32(12, true));
         const width = Math.max(1, dv.getUint32(16, true));
@@ -241,26 +235,34 @@
         let formatLabel = 'DDS';
 
         if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DX10) {
+            if (src.byteLength < 148) {
+                throw new Error('Header DX10 DDS tidak lengkap.');
+            }
             const dxgiFormat = dv.getUint32(128, true);
             dataOffset = 148;
             if (dxgiFormat === 98 || dxgiFormat === 97 || dxgiFormat === 99) {
                 rgba = decodeBc7ToRgba(src, width, height, dataOffset, dxgiFormat === 98 || dxgiFormat === 99);
-                formatLabel = 'BC7_' + dxgiFormat;
+                formatLabel = 'BC7_Mode6_' + dxgiFormat;
             } else if (dxgiFormat === 71 || dxgiFormat === 72) {
                 rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
+                formatLabel = 'DXT1';
             } else if (dxgiFormat === 77 || dxgiFormat === 78) {
                 rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+                formatLabel = 'DXT5';
             } else {
-                throw new Error('DXGI format DDS tidak didukung: ' + dxgiFormat);
+                throw new Error('DXGI format DDS tidak didukung: ' + dxgiFormat + ' (gunakan DXT1/DXT5).');
             }
         } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT1) {
             rgba = decodeDxt1ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT1';
         } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT3) {
             rgba = decodeDxt3ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT3';
         } else if ((pfFlags & DDPF_FOURCC) && fourCC === FOURCC_DXT5) {
             rgba = decodeDxt5ToRgba(src, width, height, dataOffset);
+            formatLabel = 'DXT5';
         } else {
-            throw new Error('Format DDS tidak dikenali');
+            throw new Error('Format DDS tidak dikenali (gunakan DXT1, DXT3, atau DXT5).');
         }
 
         const tex = new pc.Texture(graphicsDevice, {
