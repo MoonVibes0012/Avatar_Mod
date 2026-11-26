@@ -1,8 +1,13 @@
 /* ===== VTuber Forge — js/io/vrm_exporter.js ===== */
-// Pembentukan buffer binary GLB + ekstensi VRM 0.0 dan fungsi exportVRM
+// Ekspor geometri mesh statis ke wadah biner GLB 2.0 (belum termasuk skeleton/blendshape VRM penuh)
 
 (function () {
     'use strict';
+
+    function setExportStatus(msg) {
+        const el = document.getElementById('status');
+        if (el) el.textContent = msg;
+    }
 
     function logVrmExport(msg) {
         if (typeof window.dbg === 'function') {
@@ -66,9 +71,31 @@
         return nodeTransform;
     }
 
-    function buildVrmGlbBuffer(entity) {
-        const renderComp = typeof entity.findComponent === 'function' ? entity.findComponent('render') : null;
-        if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
+    function collectRenderMeshInstances(rootEntity) {
+        const list = [];
+        if (!rootEntity) return list;
+
+        if (typeof rootEntity.findComponents === 'function') {
+            const comps = rootEntity.findComponents('render') || [];
+            comps.forEach((rc) => {
+                if (rc && Array.isArray(rc.meshInstances)) {
+                    rc.meshInstances.forEach((mi) => {
+                        if (mi && mi.mesh) list.push(mi);
+                    });
+                }
+            });
+        } else if (rootEntity.render && Array.isArray(rootEntity.render.meshInstances)) {
+            rootEntity.render.meshInstances.forEach((mi) => {
+                if (mi && mi.mesh) list.push(mi);
+            });
+        }
+
+        return list;
+    }
+
+    function buildGlbMeshBuffer(entity) {
+        const meshInstances = collectRenderMeshInstances(entity);
+        if (meshInstances.length === 0) {
             throw new Error("Objek tidak memiliki mesh.");
         }
 
@@ -96,7 +123,7 @@
             return bvIdx;
         };
 
-        renderComp.meshInstances.forEach((mi) => {
+        meshInstances.forEach((mi) => {
             if (!mi || !mi.mesh || !mi.mesh.getPositions || !mi.mesh.getIndices) return;
             const pos = mi.mesh.getPositions();
             const indices = mi.mesh.getIndices();
@@ -123,6 +150,40 @@
                 max: [maxX, maxY, maxZ]
             });
 
+            const attributes = { POSITION: posAcc };
+
+            if (typeof mi.mesh.getNormals === 'function') {
+                const nrm = mi.mesh.getNormals();
+                if (nrm && nrm.length >= vCount * 3) {
+                    const nrmArr = new Float32Array(nrm.slice(0, vCount * 3));
+                    const nrmBv = appendBufferChunk(nrmArr, 34962);
+                    const nrmAcc = accessors.length;
+                    accessors.push({
+                        bufferView: nrmBv,
+                        componentType: 5126,
+                        count: vCount,
+                        type: 'VEC3'
+                    });
+                    attributes.NORMAL = nrmAcc;
+                }
+            }
+
+            if (typeof mi.mesh.getUvs === 'function') {
+                const uvs = mi.mesh.getUvs(0);
+                if (uvs && uvs.length >= vCount * 2) {
+                    const uvArr = new Float32Array(uvs.slice(0, vCount * 2));
+                    const uvBv = appendBufferChunk(uvArr, 34962);
+                    const uvAcc = accessors.length;
+                    accessors.push({
+                        bufferView: uvBv,
+                        componentType: 5126,
+                        count: vCount,
+                        type: 'VEC2'
+                    });
+                    attributes.TEXCOORD_0 = uvAcc;
+                }
+            }
+
             const idxArr = new Uint32Array(indices);
             const idxBv = appendBufferChunk(idxArr, 34963);
             const idxAcc = accessors.length;
@@ -135,14 +196,14 @@
 
             meshesGltf.push({
                 primitives: [{
-                    attributes: { POSITION: posAcc },
+                    attributes: attributes,
                     indices: idxAcc
                 }]
             });
         });
 
         if (meshesGltf.length === 0) {
-            throw new Error("Tidak ada geometri mesh valid untuk di-export ke VRM.");
+            throw new Error("Tidak ada geometri mesh valid untuk di-export ke GLB.");
         }
 
         const baseTransform = extractNodeTransform(entity);
@@ -160,29 +221,17 @@
         });
 
         const gltfJson = {
-            asset: { version: '2.0', generator: 'VTuber Forge VRM Exporter' },
+            asset: {
+                version: '2.0',
+                generator: 'VTuber Forge GLB Static Mesh Exporter'
+            },
             scene: 0,
             scenes: [{ nodes: nodes.map((_, i) => i) }],
             nodes: nodes,
             meshes: meshesGltf,
             buffers: [{ byteLength: byteOffset }],
             bufferViews: bufferViews,
-            accessors: accessors,
-            extensionsUsed: ['VRM'],
-            extensions: {
-                VRM: {
-                    exporterVersion: 'VTuber Forge v0.1',
-                    specVersion: '0.0',
-                    meta: {
-                        title: entity.name || 'VTuberAvatar',
-                        author: 'VTuber Forge',
-                        allowedUserName: 'Everyone',
-                        licenseName: 'Other'
-                    },
-                    humanoid: { humanBones: [] },
-                    blendShapeMaster: { blendShapeGroups: [] }
-                }
-            }
+            accessors: accessors
         };
 
         const jsonStr = JSON.stringify(gltfJson);
@@ -225,25 +274,38 @@
         return out;
     }
 
-    function exportVRM() {
+    function exportGLB() {
         const pcApp = getVrmExportApp();
         if (!pcApp || !pcApp.root) return alert("Scene belum siap.");
         const selected = getSelectedEntitySafe();
-        if (!selected) return alert("Pilih model dulu sebelum export VRM!");
+        if (!selected) return alert("Pilih model dulu sebelum export GLB!");
+
+        const meshInstances = collectRenderMeshInstances(selected);
+        const hasRigOrMorph = meshInstances.some((mi) => Boolean(mi.skinInstance || mi.morphInstance));
+
         try {
-            const glbData = buildVrmGlbBuffer(selected);
-            const cleanName = (selected.name || 'avatar').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const glbData = buildGlbMeshBuffer(selected);
+            const cleanName = (selected.name || 'model').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const outFile = `${cleanName}_mesh.glb`;
             if (typeof window.downloadBinary === 'function') {
-                window.downloadBinary(`${cleanName}.vrm`, glbData, 'model/gltf-binary');
+                window.downloadBinary(outFile, glbData, 'model/gltf-binary');
+                if (hasRigOrMorph) {
+                    setExportStatus("✓ Export GLB statis selesai (catatan: tulang/morph VRM belum disertakan).");
+                } else {
+                    setExportStatus("✓ Export GLB selesai: " + outFile);
+                }
             } else {
                 throw new Error("Helper downloadBinary belum siap.");
             }
         } catch (err) {
-            logVrmExport("Export VRM error: " + err.message);
-            alert("Gagal export VRM: " + err.message);
+            logVrmExport("Export GLB error: " + err.message);
+            alert("Gagal export GLB: " + err.message);
         }
     }
-    window.exportVRM = exportVRM;
 
-    logVrmExport("✅ vrm_exporter.js loaded");
+    // Pertahankan alias exportVRM demi kompatibilitas pemanggil UI lama
+    window.exportGLB = exportGLB;
+    window.exportVRM = exportGLB;
+
+    logVrmExport("✅ vrm_exporter.js (GLB static mesh exporter) loaded");
 })();
