@@ -46,7 +46,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WebView.setWebContentsDebuggingEnabled(true)
 
         cleanupOldCacheIntents()
@@ -243,7 +242,6 @@ class MainActivity : Activity() {
                         arrayOf(
                             "application/octet-stream",
                             "model/gltf-binary",
-                            "model/gltf+json",
                             "application/json",
                             "text/plain",
                             "*/*"
@@ -410,6 +408,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onPause()
         if (::webView.isInitialized) {
             webView.onPause()
@@ -418,12 +417,14 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (::webView.isInitialized) {
             webView.onResume()
         }
     }
 
     override fun onDestroy() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pendingWebPermissionRequest?.deny()
         pendingWebPermissionRequest = null
         filePathCallback?.onReceiveValue(null)
