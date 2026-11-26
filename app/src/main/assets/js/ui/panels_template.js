@@ -1,13 +1,13 @@
 /* ===== VTuber Forge — js/ui/panels_template.js ===== */
-// Template konten Panel Kiri (#leftBody: Primitif, Scene, Gerak, Ekspresi, Face Tracking)
+// Template konten Panel Kiri (#leftBody: Primitif, Scene, Gerak, Ekspresi + Custom, Face Tracking)
 // & Panel Kanan (#rightBody: Transform, Material, Edit Mesh & Bone, Character Driver, Anatomi, Aksi Objek)
 
 (function () {
     'use strict';
 
     /**
-     * Merender isi Panel Kiri (#leftBody) dengan penanganan error yang aman
-     * agar kegagalan pada satu bagian tidak merusak seluruh panel.
+     * Merender isi Panel Kiri (#leftBody) dengan kontrol primitif, file/scene,
+     * animasi, preset ekspresi + ekspresi kustom, face tracking, dan hierarki scene.
      */
     function renderLeftPanel(leftBody) {
         if (!leftBody) return;
@@ -52,13 +52,18 @@
                 '<div class="sec">',
                 '  <div class="sec-title">EKSPRESI & FACE TRACKING</div>',
                 '  <div class="grid3" id="exprButtons">',
-                '    <button type="button" data-expr="happy">Happy</button>',
-                '    <button type="button" data-expr="angry">Angry</button>',
-                '    <button type="button" data-expr="sad">Sad</button>',
-                '    <button type="button" data-expr="surprised">Surprised</button>',
-                '    <button type="button" data-expr="blink">Blink</button>',
-                '    <button type="button" data-expr="neutral">Reset</button>',
+                '    <button type="button" class="expr-btn" data-expr="happy">Happy</button>',
+                '    <button type="button" class="expr-btn" data-expr="angry">Angry</button>',
+                '    <button type="button" class="expr-btn" data-expr="sad">Sad</button>',
+                '    <button type="button" class="expr-btn" data-expr="surprised">Surprised</button>',
+                '    <button type="button" class="expr-btn" data-expr="blink">Blink</button>',
+                '    <button type="button" class="expr-btn" data-expr="neutral" id="resetExprBtn">Reset</button>',
                 '  </div>',
+                '  <div class="row" style="margin-top:6px;gap:4px;">',
+                '    <input type="text" id="customExprName" placeholder="Nama ekspresi..." style="flex:1;min-width:0;">',
+                '    <button type="button" id="saveCustomExprBtn">Simpan</button>',
+                '  </div>',
+                '  <div class="grid2" id="customExprList" style="margin-top:4px;"></div>',
                 '  <div class="row" style="margin-top:6px;">',
                 '    <button type="button" id="btnFaceTrack" style="flex:1;">🎥 Face Tracking</button>',
                 '  </div>',
@@ -74,8 +79,8 @@
     }
 
     /**
-     * Merender isi Panel Kanan (#rightBody) termasuk kontrol Transform, Material,
-     * Edit Mesh & Bone (Smooth, Split, Edit Bone, Edit Vertex), Character Driver, dan Anatomi.
+     * Merender isi Panel Kanan (#rightBody) termasuk kontrol Transform & Fokus Kamera,
+     * Material, Edit Mesh & Bone, Character Driver, Anatomi, dan Aksi Objek.
      */
     function renderRightPanel(rightBody) {
         if (!rightBody) return;
@@ -83,7 +88,10 @@
             rightBody.innerHTML = [
                 '<div class="sec">',
                 '  <div class="sec-title">TRANSFORM & SNAP</div>',
-                '  <div class="row"><button type="button" id="snapToggle">Grid Snap (0.5)</button></div>',
+                '  <div class="grid2">',
+                '    <button type="button" id="snapToggle">Grid Snap (0.5)</button>',
+                '    <button type="button" id="focusBtn">🎯 Fokus Kamera</button>',
+                '  </div>',
                 '  <div class="trow"><label>Pos X</label><input type="number" id="px" step="0.1" value="0"><input type="range" id="pxR" min="-10" max="10" step="0.1" value="0"><span id="pxo">0.00</span></div>',
                 '  <div class="trow"><label>Pos Y</label><input type="number" id="py" step="0.1" value="0"><input type="range" id="pyR" min="-10" max="10" step="0.1" value="0"><span id="pyo">0.00</span></div>',
                 '  <div class="trow"><label>Pos Z</label><input type="number" id="pz" step="0.1" value="0"><input type="range" id="pzR" min="-10" max="10" step="0.1" value="0"><span id="pzo">0.00</span></div>',
