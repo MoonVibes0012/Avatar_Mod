@@ -63,6 +63,19 @@
         } catch (e) {}
     }
 
+    function detectActualPrecision(gd) {
+        if (!gd) return 'mediump';
+        if (typeof gd.precision === 'string' && gd.precision) return gd.precision;
+        try {
+            const gl = gd.gl;
+            if (gl && typeof gl.getShaderPrecisionFormat === 'function') {
+                const fmt = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+                return (fmt && fmt.precision > 0) ? 'highp' : 'mediump';
+            }
+        } catch (e) {}
+        return 'mediump';
+    }
+
     function applyToScene() {
         const pcApp = getAppSafe();
         const recovery = window.VtfGpuContextRecovery;
@@ -74,9 +87,11 @@
             const cap = Number(currentSettings.maxPixelRatio) || 1.5;
             gd.maxPixelRatio = Math.max(0.5, Math.min(nativeDpr, cap));
 
+            const actualPrec = detectActualPrecision(gd);
             const desiredPrec = (currentSettings.precision === 'highp') ? 'highp' : 'mediump';
             if (dev) {
-                dev.precisionNeedsReload = (gd.precision && gd.precision !== desiredPrec);
+                dev.precision = actualPrec;
+                dev.precisionNeedsReload = (actualPrec !== desiredPrec);
             }
 
             if (typeof pcApp.resizeCanvas === 'function') {
@@ -138,9 +153,15 @@
     }
 
     function getInfo() {
+        const pcApp = getAppSafe();
         const dev = window.VtfGpuContextRecovery
             ? window.VtfGpuContextRecovery.detectDeviceInfo(currentSettings)
             : { renderer: 'WebGL', contextLostCount: 0, lastGpuEvent: 'Normal' };
+        if (pcApp && pcApp.graphicsDevice) {
+            const actualPrec = detectActualPrecision(pcApp.graphicsDevice);
+            dev.precision = actualPrec;
+            dev.precisionNeedsReload = (actualPrec !== (currentSettings.precision || 'mediump'));
+        }
         return {
             settings: Object.assign({}, currentSettings),
             device: Object.assign({}, dev)
