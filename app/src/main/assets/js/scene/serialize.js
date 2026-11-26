@@ -41,6 +41,31 @@
         return fallback.slice();
     }
 
+    /**
+     * Menyeragamkan _meshCache (baik format array maupun objek tunggal) menjadi array [{ pos, idx, uvs, normals }].
+     */
+    function normalizeMeshCacheArray(rawCache) {
+        if (!rawCache) return [];
+        const list = Array.isArray(rawCache) ? rawCache : [rawCache];
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+            const item = list[i];
+            if (!item || typeof item !== 'object') continue;
+            const posSrc = item.pos || item.positions;
+            if (!posSrc || !posSrc.length) continue;
+            const idxSrc = item.idx || item.indices || [];
+            const uvSrc = item.uvs || [];
+            const nrmSrc = item.normals || [];
+            out.push({
+                pos: Array.isArray(posSrc) ? posSrc : Array.from(posSrc),
+                idx: Array.isArray(idxSrc) ? idxSrc : Array.from(idxSrc),
+                uvs: Array.isArray(uvSrc) ? uvSrc : Array.from(uvSrc),
+                normals: Array.isArray(nrmSrc) ? nrmSrc : Array.from(nrmSrc)
+            });
+        }
+        return out;
+    }
+
     function extractMorphWeights(entity) {
         if (!entity || !entity._morphInstance || !Array.isArray(entity._morphNames)) return [];
         const weights = [];
@@ -61,10 +86,8 @@
     function serializeEntitySnapshot(entity, includeMeshData) {
         if (!entity || typeof entity.getPosition !== 'function') return null;
 
-        let meshDataArr = [];
-        if (includeMeshData && Array.isArray(entity._meshCache) && entity._meshCache.length > 0) {
-            meshDataArr = entity._meshCache;
-        }
+        const normalizedCache = normalizeMeshCacheArray(entity._meshCache);
+        const meshDataArr = includeMeshData ? normalizedCache : [];
 
         let mat = (entity.render && entity.render.material) ? entity.render.material : null;
         if (Array.isArray(mat)) mat = mat[0];
@@ -75,7 +98,7 @@
             : ((mat && mat.diffuse) ? toVec3Array(mat.diffuse, [0.5, 0.5, 0.5]) : [0.5, 0.5, 0.5]);
 
         let objType = (entity.render && entity.render.type) ? entity.render.type : 'box';
-        if (meshDataArr.length > 0) objType = 'custom';
+        if (normalizedCache.length > 0) objType = 'custom';
 
         const renderComps = typeof entity.findComponents === 'function' ? entity.findComponents('render') : [];
         const hasSkeleton = renderComps.some(comp =>
@@ -97,7 +120,7 @@
             rough: (mat && typeof mat.gloss === 'number' && isFinite(mat.gloss)) ? mat.gloss : 0.5,
             metal: (mat && typeof mat.metalness === 'number' && isFinite(mat.metalness)) ? mat.metalness : 0,
             meshDataArr: meshDataArr,
-            hasMeshCache: !!(Array.isArray(entity._meshCache) && entity._meshCache.length > 0),
+            hasMeshCache: normalizedCache.length > 0,
             morphNames: morphNames,
             morphWeights: morphWeights,
             animSpin: !!(entity._animSpin),
@@ -135,6 +158,7 @@
 
     window.SceneSerializer = {
         toVec3Array: toVec3Array,
+        normalizeMeshCacheArray: normalizeMeshCacheArray,
         serializeEntitySnapshot: serializeEntitySnapshot,
         serializeSceneSnapshot: serializeSceneSnapshot,
         parseSceneSnapshot: parseSceneSnapshot
