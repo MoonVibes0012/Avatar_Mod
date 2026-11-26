@@ -58,6 +58,28 @@
         return window.redoStack;
     }
 
+    function normalizeCachedMeshList(rawCache) {
+        if (window.SceneSerializer && typeof window.SceneSerializer.normalizeMeshCacheArray === 'function') {
+            return window.SceneSerializer.normalizeMeshCacheArray(rawCache);
+        }
+        if (!rawCache) return [];
+        const list = Array.isArray(rawCache) ? rawCache : [rawCache];
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+            const item = list[i];
+            if (!item || typeof item !== 'object') continue;
+            const posSrc = item.pos || item.positions;
+            if (!posSrc || !posSrc.length) continue;
+            out.push({
+                pos: Array.isArray(posSrc) ? posSrc : Array.from(posSrc),
+                idx: Array.isArray(item.idx || item.indices) ? (item.idx || item.indices) : Array.from(item.idx || item.indices || []),
+                uvs: Array.isArray(item.uvs) ? item.uvs : Array.from(item.uvs || []),
+                normals: Array.isArray(item.normals) ? item.normals : Array.from(item.normals || [])
+            });
+        }
+        return out;
+    }
+
     function hasAnySkinnedEntity() {
         const st = getSceneStateSafe();
         if (!st || !Array.isArray(st.objects)) return false;
@@ -135,14 +157,12 @@
             m.metalness = (typeof item.metal === 'number') ? item.metal : 0;
             if (typeof m.update === 'function') m.update();
 
-            let cachedMeshData = null;
-            if (Array.isArray(item.meshDataArr) && item.meshDataArr.length > 0) {
-                cachedMeshData = item.meshDataArr;
-            } else if (item.name && window.meshCachePool && window.meshCachePool.has(item.name)) {
-                cachedMeshData = window.meshCachePool.get(item.name);
+            let cachedMeshData = normalizeCachedMeshList(item.meshDataArr);
+            if (cachedMeshData.length === 0 && item.name && window.meshCachePool && typeof window.meshCachePool.get === 'function' && window.meshCachePool.has(item.name)) {
+                cachedMeshData = normalizeCachedMeshList(window.meshCachePool.get(item.name));
             }
 
-            if (item.type === 'custom' && Array.isArray(cachedMeshData) && cachedMeshData.length > 0 && pcApp.graphicsDevice) {
+            if ((item.type === 'custom' || cachedMeshData.length > 0) && cachedMeshData.length > 0 && pcApp.graphicsDevice) {
                 e.addComponent('render', { type: 'asset', castShadows: false });
                 const mis = [];
                 cachedMeshData.forEach(md => {
