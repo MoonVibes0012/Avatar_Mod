@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/anatomy/anatomy_bridge_ui.js ===== */
-// Integrasi kontrol Anatomi ke panel UI, undo/redo saat drag selesai, reset pose, & sinkronisasi seleksi
+// Integrasi kontrol Anatomi, Preset Pose, Pose Kustom, & Diagnostik ke panel UI
 
 (function () {
     'use strict';
@@ -7,15 +7,30 @@
     let anatomyActive = false;
     let lastWatchedRoot = null;
 
+    /**
+     * Mengambil elemen DOM berdasarkan ID secara aman.
+     */
     function byId(id) {
-        return document.getElementById(id);
+        try {
+            return document.getElementById(id);
+        } catch (e) {
+            return null;
+        }
     }
 
+    /**
+     * Memperbarui teks status pada elemen #status jika tersedia.
+     */
     function setAnatomyStatus(msg) {
-        const el = byId('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = byId('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat snapshot undo/redo secara aman setelah perubahan pose.
+     */
     function commitHistorySafe() {
         if (typeof window.saveState === 'function') {
             try { window.saveState(); } catch (e) {}
@@ -26,6 +41,9 @@
         } catch (e) {}
     }
 
+    /**
+     * Mengambil entitas model yang sedang terpilih pada state global S.
+     */
     function getCurrentModelEntity() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) {
             return window.S.selected;
@@ -36,6 +54,9 @@
         return null;
     }
 
+    /**
+     * Mengekstrak dan menyinkronkan peta bagian anatomi dari model terpilih ke AnatomySolver.
+     */
     function refreshModelAnatomy(force) {
         if (!window.VrmPartExtractor || !window.AnatomySolver) return null;
         const model = getCurrentModelEntity();
@@ -58,6 +79,9 @@
         return window.AnatomySolver.getRecord();
     }
 
+    /**
+     * Mengisi opsi dropdown bagian anatomi berdasarkan record model aktif.
+     */
     function populatePartSelector(record) {
         const sel = byId('anatPartSelect');
         if (!sel) return;
@@ -85,39 +109,97 @@
         }
     }
 
+    /**
+     * Memperbarui daftar opsi pose kustom dari AnatomyPoses ke dropdown panel.
+     */
+    function refreshCustomPoseSelect() {
+        const sel = byId('anatCustomPoseSelect');
+        if (!sel) return;
+        const prev = sel.value;
+        sel.textContent = '';
+
+        const defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = '-- Pose Kustom --';
+        sel.appendChild(defOpt);
+
+        if (window.AnatomyPoses && typeof window.AnatomyPoses.listCustomPoses === 'function') {
+            const names = window.AnatomyPoses.listCustomPoses();
+            for (let i = 0; i < names.length; i++) {
+                const opt = document.createElement('option');
+                opt.value = names[i];
+                opt.textContent = names[i];
+                sel.appendChild(opt);
+            }
+        }
+        if (prev) sel.value = prev;
+    }
+
+    /**
+     * Merender kartu kontrol Gerak Anatomi, Preset Pose, Pose Kustom, dan Diagnostik
+     * ke dalam panel kanan (#rightBody).
+     */
     function ensureAnatomySectionInPanel() {
         const rightBody = byId('rightBody');
-        if (!rightBody || !rightBody.dataset.vtfRendered) return;
+        if (!rightBody) return;
         if (byId('anatomySectionCard')) return;
 
         const sec = document.createElement('div');
         sec.id = 'anatomySectionCard';
         sec.className = 'sec';
         sec.innerHTML = [
-            '<h4>🦴 Gerak Anatomi</h4>',
+            '<div class="sec-title">🦴 GERAK ANATOMI</div>',
             '<div class="grid2">',
             '  <button type="button" id="anatToggleBtn">Mode: OFF</button>',
             '  <button type="button" id="anatDensityBtn">Boxes: Core</button>',
             '</div>',
-            '<div class="prop">',
+            '<div class="prop" style="margin-top:6px;">',
             '  <label for="anatPartSelect">Bagian Aktif</label>',
             '  <select id="anatPartSelect"><option value="">-- Pilih Bagian Anatomi --</option></select>',
             '</div>',
-            '<div class="grid2">',
+            '<div class="grid2" style="margin-top:6px;">',
             '  <button type="button" id="anatDragModeBtn">Aksi: Rotate</button>',
             '  <button type="button" id="anatMirrorBtn">Mirror: OFF</button>',
             '</div>',
-            '<div class="grid2">',
+            '<div class="grid2" style="margin-top:6px;">',
             '  <button type="button" id="anatResetPartBtn">Reset Bagian</button>',
             '  <button type="button" id="anatResetAllBtn">Reset Semua</button>',
+            '</div>',
+            '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12);">',
+            '  <div class="sec-title">PRESET & POSE KUSTOM</div>',
+            '  <div class="grid3">',
+            '    <button type="button" data-anat-pose="rest">Rest</button>',
+            '    <button type="button" data-anat-pose="relaxed">Relaxed</button>',
+            '    <button type="button" data-anat-pose="wave_right">Wave</button>',
+            '  </div>',
+            '  <div class="row" style="margin-top:6px;gap:4px;">',
+            '    <input type="text" id="anatCustomPoseName" placeholder="Nama pose..." style="flex:1;min-width:0;">',
+            '    <button type="button" id="anatSavePoseBtn">Simpan</button>',
+            '  </div>',
+            '  <div class="row" style="margin-top:6px;gap:4px;">',
+            '    <select id="anatCustomPoseSelect" style="flex:1;min-width:0;"><option value="">-- Pose Kustom --</option></select>',
+            '    <button type="button" id="anatLoadPoseBtn">Muat</button>',
+            '  </div>',
+            '  <div class="row" style="margin-top:6px;">',
+            '    <button type="button" id="anatDiagBtn" style="flex:1;">🩺 Diagnostik Anatomi</button>',
+            '  </div>',
             '</div>'
         ].join('');
 
-        rightBody.appendChild(sec);
+        const host = byId('anatomyHostSection');
+        if (host) {
+            host.replaceWith(sec);
+        } else {
+            rightBody.appendChild(sec);
+        }
         bindAnatomyUiControls();
         populatePartSelector(refreshModelAnatomy(false));
+        refreshCustomPoseSelect();
     }
 
+    /**
+     * Menyinkronkan tampilan label dan class aktif tombol-tombol kontrol anatomi.
+     */
     function syncAnatomyButtonsUi() {
         const tBtn = byId('anatToggleBtn');
         if (tBtn) {
@@ -144,6 +226,9 @@
         }
     }
 
+    /**
+     * Mengaktifkan atau menonaktifkan mode interaksi kotak jangkar & bola penanda anatomi.
+     */
     function setAnatomyEnabled(flag) {
         anatomyActive = !!flag;
         if (anatomyActive) {
@@ -174,6 +259,9 @@
         syncAnatomyButtonsUi();
     }
 
+    /**
+     * Menghubungkan seluruh event listener kontrol anatomi, preset pose, pose kustom, dan diagnostik.
+     */
     function bindAnatomyUiControls() {
         const tBtn = byId('anatToggleBtn');
         if (tBtn && tBtn.dataset.vtfAnatBound !== '1') {
@@ -253,8 +341,88 @@
                 setAnatomyStatus('↩ Semua pose anatomi di-reset ke Rest Pose.');
             };
         }
+
+        document.querySelectorAll('button[data-anat-pose]').forEach(function (btn) {
+            if (btn.dataset.vtfAnatBound === '1') return;
+            btn.dataset.vtfAnatBound = '1';
+            btn.onclick = function () {
+                const presetId = btn.getAttribute('data-anat-pose');
+                refreshModelAnatomy(false);
+                if (window.AnatomyPoses && typeof window.AnatomyPoses.applyPreset === 'function') {
+                    const ok = window.AnatomyPoses.applyPreset(presetId);
+                    if (ok) {
+                        commitHistorySafe();
+                        setAnatomyStatus('🧍 Preset pose anatomi diterapkan: ' + presetId);
+                    } else {
+                        setAnatomyStatus('⚠ Model anatomi belum siap untuk preset pose.');
+                    }
+                }
+            };
+        });
+
+        const savePoseBtn = byId('anatSavePoseBtn');
+        if (savePoseBtn && savePoseBtn.dataset.vtfAnatBound !== '1') {
+            savePoseBtn.dataset.vtfAnatBound = '1';
+            savePoseBtn.onclick = function () {
+                const inp = byId('anatCustomPoseName');
+                const poseName = inp ? inp.value.trim() : '';
+                if (!poseName) {
+                    setAnatomyStatus('⚠ Isi nama pose kustom terlebih dahulu.');
+                    return;
+                }
+                refreshModelAnatomy(false);
+                if (window.AnatomyPoses && typeof window.AnatomyPoses.saveCustomPose === 'function') {
+                    if (window.AnatomyPoses.saveCustomPose(poseName)) {
+                        if (inp) inp.value = '';
+                        refreshCustomPoseSelect();
+                        setAnatomyStatus('💾 Pose kustom disimpan: ' + poseName);
+                    } else {
+                        setAnatomyStatus('⚠ Gagal menyimpan pose kustom (pilih model VRM dulu).');
+                    }
+                }
+            };
+        }
+
+        const loadPoseBtn = byId('anatLoadPoseBtn');
+        if (loadPoseBtn && loadPoseBtn.dataset.vtfAnatBound !== '1') {
+            loadPoseBtn.dataset.vtfAnatBound = '1';
+            loadPoseBtn.onclick = function () {
+                const sel = byId('anatCustomPoseSelect');
+                const poseName = sel ? sel.value : '';
+                if (!poseName) {
+                    setAnatomyStatus('⚠ Pilih pose kustom dari daftar.');
+                    return;
+                }
+                refreshModelAnatomy(false);
+                if (window.AnatomyPoses && typeof window.AnatomyPoses.applyCustomPose === 'function') {
+                    if (window.AnatomyPoses.applyCustomPose(poseName)) {
+                        commitHistorySafe();
+                        setAnatomyStatus('▶ Pose kustom dimuat: ' + poseName);
+                    } else {
+                        setAnatomyStatus('⚠ Gagal memuat pose kustom.');
+                    }
+                }
+            };
+        }
+
+        const diagBtn = byId('anatDiagBtn');
+        if (diagBtn && diagBtn.dataset.vtfAnatBound !== '1') {
+            diagBtn.dataset.vtfAnatBound = '1';
+            diagBtn.onclick = function () {
+                refreshModelAnatomy(false);
+                if (window.AnatomyDiagnostics && typeof window.AnatomyDiagnostics.printReport === 'function') {
+                    const summary = window.AnatomyDiagnostics.printReport();
+                    setAnatomyStatus('🩺 ' + summary);
+                } else {
+                    setAnatomyStatus('⚠ Modul diagnostik anatomi tidak tersedia.');
+                }
+            };
+        }
     }
 
+    /**
+     * Menangani pembaruan UI saat seleksi objek di scene berubah.
+     */
     function handleSelectionChanged() {
         ensureAnatomySectionInPanel();
         const cur = getCurrentModelEntity();
@@ -273,7 +441,6 @@
         }
     }
 
-    // Callback dari SelectionSphere & AnatomySolver
     window.__vtfOnAnatomyBoxTapped = function (partId) {
         if (!window.AnatomySolver) return;
         refreshModelAnatomy(false);
@@ -312,7 +479,6 @@
 
     window.__vtfOnAnatomySelectionChanged = handleSelectionChanged;
 
-    // Pantau perubahan seleksi objek / render panel tanpa polling berulang
     const origRenderPanels = window.renderPanelsTemplates;
     if (typeof origRenderPanels === 'function' && !origRenderPanels.__vtfWrappedByAnatomy) {
         const wrappedRenderPanels = function () {
@@ -333,7 +499,11 @@
 
     window.AnatomyBridgeUI = {
         setEnabled: setAnatomyEnabled,
-        refresh: function () { return refreshModelAnatomy(true); },
+        refresh: function () {
+            ensureAnatomySectionInPanel();
+            refreshCustomPoseSelect();
+            return refreshModelAnatomy(true);
+        },
         notifySelectionChanged: handleSelectionChanged
     };
 
