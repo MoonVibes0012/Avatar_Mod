@@ -20,15 +20,30 @@
     let isBlinking = false;
     let blinkProgress = 0;
 
+    /**
+     * Mengambil elemen DOM berdasarkan ID secara aman.
+     */
     function byId(id) {
-        return document.getElementById(id);
+        try {
+            return document.getElementById(id);
+        } catch (e) {
+            return null;
+        }
     }
 
+    /**
+     * Memperbarui teks status pada elemen #status jika tersedia.
+     */
     function setDriverStatus(msg) {
-        const el = byId('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = byId('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat log debug ke overlay debug atau konsol browser.
+     */
     function logDriver(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -37,10 +52,15 @@
         }
     }
 
+    /**
+     * Mengambil instance pc.Application aktif secara aman.
+     */
     function getDriverApp() {
         if (typeof window.getPcApp === 'function') {
-            const pcApp = window.getPcApp();
-            if (pcApp) return pcApp;
+            try {
+                const pcApp = window.getPcApp();
+                if (pcApp) return pcApp;
+            } catch (e) {}
         }
         if (typeof window.app !== 'undefined' && window.app) return window.app;
         try {
@@ -49,6 +69,9 @@
         return null;
     }
 
+    /**
+     * Mengambil entitas objek terpilih pada state global S secara aman.
+     */
     function getSelectedObj() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
@@ -57,17 +80,26 @@
         return null;
     }
 
+    /**
+     * Menandai status aktif Character Driver pada properti entitas.
+     */
     function setActiveDriverFlag(entity, active) {
         if (entity && typeof entity === 'object') {
             entity._driverActive = !!active;
         }
     }
 
+    /**
+     * Menyinkronkan tampilan tombol #btnCharDriver dengan status aktif driver.
+     */
     function updateDriverButtonState() {
         const btn = byId('btnCharDriver');
         if (btn) btn.classList.toggle('active', !!driverEnabled);
     }
 
+    /**
+     * Membuka atau menutup sub-panel kontrol Character Driver.
+     */
     function toggleCharDriverPanel() {
         const panel = byId('charDriverPanel');
         if (!panel) return;
@@ -82,10 +114,13 @@
         }
     }
 
+    /**
+     * Mengaktifkan Character Driver pada model yang sedang terpilih.
+     */
     function attachDriverToSelected() {
         const selected = getSelectedObj();
         if (!selected) {
-            alert("Pilih model VRM/GLB dulu!");
+            setDriverStatus("⚠ Pilih model VRM/GLB dulu!");
             return false;
         }
         driverEnabled = true;
@@ -98,6 +133,9 @@
         return true;
     }
 
+    /**
+     * Melepas Character Driver, mematikan semua toggle, dan mengembalikan pose awal.
+     */
     function detachDriver() {
         const currentSelected = getSelectedObj();
         driverEnabled = false;
@@ -126,6 +164,9 @@
         logDriver("⏹ Character driver detached");
     }
 
+    /**
+     * Mengembalikan rotasi dan skala tulang/entitas terpilih ke bind pose awal.
+     */
     function resetDriverPose() {
         const selected = getSelectedObj();
         if (!selected) return;
@@ -159,6 +200,9 @@
         setDriverStatus("Pose di-reset");
     }
 
+    /**
+     * Mencari indeks morph target kedip mata berdasarkan kata kunci standar VRM/ARKit.
+     */
     function findBlinkIndices(morphNames) {
         if (!Array.isArray(morphNames)) return [];
         const indices = [];
@@ -171,6 +215,9 @@
         return indices;
     }
 
+    /**
+     * Mencari entitas tulang berdasarkan daftar kata kunci nama tulang.
+     */
     function findBoneByKeywords(bones, keywords) {
         if (!Array.isArray(bones)) return null;
         return bones.find(b => {
@@ -179,6 +226,9 @@
         }) || null;
     }
 
+    /**
+     * Mengambil rotasi bind pose tulang tertentu dengan fallback rotasi saat ini.
+     */
     function getBindRot(entity, boneIndex, fallbackEuler) {
         if (entity && Array.isArray(entity._bindPose) && entity._bindPose[boneIndex]) {
             const bp = entity._bindPose[boneIndex];
@@ -195,6 +245,9 @@
         };
     }
 
+    /**
+     * Memperbarui seluruh efek animasi prosedural pada setiap frame render.
+     */
     function updateProceduralAnimation(dt) {
         const selected = getSelectedObj();
         if (!selected) return;
@@ -317,71 +370,101 @@
         }
     }
 
+    /**
+     * Menghubungkan seluruh kontrol UI Character Driver setelah panel dirender.
+     */
     function bindDriverUI() {
-        const btnDriver = byId('btnCharDriver');
-        if (btnDriver) {
-            btnDriver.onclick = () => {
-                const selected = getSelectedObj();
-                if (!driverEnabled && selected) {
-                    attachDriverToSelected();
-                } else {
-                    toggleCharDriverPanel();
-                }
-            };
+        try {
+            const btnDriver = byId('btnCharDriver');
+            if (btnDriver) {
+                btnDriver.onclick = () => {
+                    const selected = getSelectedObj();
+                    if (!driverEnabled && selected) {
+                        attachDriverToSelected();
+                    } else {
+                        toggleCharDriverPanel();
+                    }
+                };
+            }
+
+            const cbBlink = byId('toggleBlink');
+            if (cbBlink) {
+                cbBlink.checked = blinkEnabled;
+                cbBlink.onchange = (e) => { blinkEnabled = !!e.target.checked; };
+            }
+
+            const cbBreath = byId('toggleBreath');
+            if (cbBreath) {
+                cbBreath.checked = breathEnabled;
+                cbBreath.onchange = (e) => { breathEnabled = !!e.target.checked; };
+            }
+
+            const slBreath = byId('breathSpeed');
+            if (slBreath) {
+                slBreath.value = String(breathSpeed);
+                slBreath.oninput = (e) => {
+                    const v = parseFloat(e.target.value);
+                    if (isFinite(v)) breathSpeed = v;
+                    const out = byId('breathSpeedOut');
+                    if (out) out.textContent = breathSpeed.toFixed(1);
+                };
+            }
+
+            const cbSway = byId('toggleSway');
+            if (cbSway) {
+                cbSway.checked = swayEnabled;
+                cbSway.onchange = (e) => { swayEnabled = !!e.target.checked; };
+            }
+
+            const slSway = byId('swayAmount');
+            if (slSway) {
+                slSway.value = String(swayAmount);
+                slSway.oninput = (e) => {
+                    const v = parseFloat(e.target.value);
+                    if (isFinite(v)) swayAmount = v;
+                    const out = byId('swayAmountOut');
+                    if (out) out.textContent = swayAmount.toFixed(1);
+                };
+            }
+
+            const cbBob = byId('toggleHeadBob');
+            if (cbBob) {
+                cbBob.checked = headBobEnabled;
+                cbBob.onchange = (e) => { headBobEnabled = !!e.target.checked; };
+            }
+
+            const cbWalk = byId('toggleWalk');
+            if (cbWalk) {
+                cbWalk.checked = walkEnabled;
+                cbWalk.onchange = (e) => { walkEnabled = !!e.target.checked; };
+            }
+
+            const slWalk = byId('walkSpeed');
+            if (slWalk) {
+                slWalk.value = String(walkSpeed);
+                slWalk.oninput = (e) => {
+                    const v = parseFloat(e.target.value);
+                    if (isFinite(v)) walkSpeed = v;
+                    const out = byId('walkSpeedOut');
+                    if (out) out.textContent = walkSpeed.toFixed(1);
+                };
+            }
+
+            const btnReset = byId('resetDriverPose');
+            if (btnReset) btnReset.onclick = resetDriverPose;
+
+            const btnDetach = byId('btnDetachDriver');
+            if (btnDetach) btnDetach.onclick = detachDriver;
+
+            updateDriverButtonState();
+        } catch (err) {
+            logDriver("bindDriverUI warning: " + err.message);
         }
-
-        const cbBlink = byId('toggleBlink');
-        if (cbBlink) cbBlink.onchange = (e) => { blinkEnabled = !!e.target.checked; };
-
-        const cbBreath = byId('toggleBreath');
-        if (cbBreath) cbBreath.onchange = (e) => { breathEnabled = !!e.target.checked; };
-
-        const slBreath = byId('breathSpeed');
-        if (slBreath) {
-            slBreath.oninput = (e) => {
-                const v = parseFloat(e.target.value);
-                if (isFinite(v)) breathSpeed = v;
-                const out = byId('breathSpeedOut');
-                if (out) out.textContent = breathSpeed.toFixed(1);
-            };
-        }
-
-        const cbSway = byId('toggleSway');
-        if (cbSway) cbSway.onchange = (e) => { swayEnabled = !!e.target.checked; };
-
-        const slSway = byId('swayAmount');
-        if (slSway) {
-            slSway.oninput = (e) => {
-                const v = parseFloat(e.target.value);
-                if (isFinite(v)) swayAmount = v;
-                const out = byId('swayAmountOut');
-                if (out) out.textContent = swayAmount.toFixed(1);
-            };
-        }
-
-        const cbBob = byId('toggleHeadBob');
-        if (cbBob) cbBob.onchange = (e) => { headBobEnabled = !!e.target.checked; };
-
-        const cbWalk = byId('toggleWalk');
-        if (cbWalk) cbWalk.onchange = (e) => { walkEnabled = !!e.target.checked; };
-
-        const slWalk = byId('walkSpeed');
-        if (slWalk) {
-            slWalk.oninput = (e) => {
-                const v = parseFloat(e.target.value);
-                if (isFinite(v)) walkSpeed = v;
-                const out = byId('walkSpeedOut');
-                if (out) out.textContent = walkSpeed.toFixed(1);
-            };
-        }
-
-        const btnReset = byId('resetDriverPose');
-        if (btnReset) btnReset.onclick = resetDriverPose;
-
-        const btnDetach = byId('btnDetachDriver');
-        if (btnDetach) btnDetach.onclick = detachDriver;
     }
 
+    /**
+     * Mendaftarkan callback pembaruan frame pada aplikasi PlayCanvas.
+     */
     function hookDriverLoop() {
         const pcApp = getDriverApp();
         if (!pcApp || typeof pcApp.on !== 'function') return false;
@@ -396,6 +479,8 @@
     }
 
     bindDriverUI();
+    window.__vtfBindDriverControls = bindDriverUI;
+
     if (!hookDriverLoop()) {
         let tries = 0;
         const timer = setInterval(() => {
@@ -407,7 +492,8 @@
     window.CharacterDriver = {
         attach: attachDriverToSelected,
         detach: detachDriver,
-        resetPose: resetDriverPose
+        resetPose: resetDriverPose,
+        bindUI: bindDriverUI
     };
 
     logDriver("✅ character_driver.js loaded");
