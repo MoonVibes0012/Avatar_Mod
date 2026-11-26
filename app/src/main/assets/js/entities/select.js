@@ -79,18 +79,24 @@
             setStatusSafe("Mode Object aktif — transform objek");
         }
     }
+    window.setMode = setMode;
 
-    document.querySelectorAll('[data-mode]').forEach(btn => {
-        const mode = btn.dataset.mode;
-        if (!btn.title) {
-            btn.title = mode === 'object'
-                ? 'Transform objek (posisi / rotasi / scale)'
-                : mode === 'vertex'
-                    ? 'Edit per-vertex (mesh non-skinned, maks 5000 vertex)'
-                    : 'Rotasi bone (butuh model dengan skeleton)';
-        }
-        btn.onclick = () => setMode(mode);
-    });
+    function bindModeButtons() {
+        document.querySelectorAll('[data-mode]').forEach(btn => {
+            const mode = btn.dataset.mode;
+            if (!btn.title) {
+                btn.title = mode === 'object'
+                    ? 'Transform objek (posisi / rotasi / scale)'
+                    : mode === 'vertex'
+                        ? 'Edit per-vertex (mesh non-skinned, maks 5000 vertex)'
+                        : 'Rotasi bone (butuh model dengan skeleton)';
+            }
+            btn.classList.toggle('on', mode === (S.mode || 'object'));
+            btn.onclick = () => setMode(mode);
+        });
+    }
+    window.bindModeButtons = bindModeButtons;
+    bindModeButtons();
 
     function syncTransformUI(entity) {
         if (!entity) return;
