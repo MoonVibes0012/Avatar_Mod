@@ -176,6 +176,9 @@
                 if (typeof window.__vtfBindMotionControls === 'function') window.__vtfBindMotionControls();
             },
             function () {
+                if (typeof window.__vtfBindExpressionControls === 'function') window.__vtfBindExpressionControls();
+            },
+            function () {
                 if (typeof window.__vtfBindSplitControls === 'function') window.__vtfBindSplitControls();
             },
             function () {
@@ -192,8 +195,8 @@
                 }
             },
             function () {
-                if (window.AnatomyBridgeUi && typeof window.AnatomyBridgeUi.refresh === 'function') {
-                    window.AnatomyBridgeUi.refresh();
+                if (window.AnatomyBridgeUI && typeof window.AnatomyBridgeUI.refresh === 'function') {
+                    window.AnatomyBridgeUI.refresh();
                 }
             }
         ];
