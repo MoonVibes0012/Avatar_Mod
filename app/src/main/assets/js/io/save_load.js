@@ -132,19 +132,24 @@
         };
     }
 
-    const saveLogBtn = document.getElementById('saveLogBtn');
-    if (saveLogBtn) {
-        saveLogBtn.onclick = () => {
-            const logs = Array.isArray(window.allLogs) ? window.allLogs : [];
-            const content = logs.length > 0
-                ? logs.join('\n')
-                : ("VTuber Forge Log — " + new Date().toISOString() + "\n(Kosong)");
-            const filename = `vtuber_debug_${Date.now()}.log`;
-            if (typeof window.downloadNative === 'function') {
-                window.downloadNative(filename, content);
-            }
-        };
+    function bindSaveLogButton() {
+        const saveLogBtn = document.getElementById('saveLogBtn');
+        if (saveLogBtn) {
+            saveLogBtn.onclick = () => {
+                const logs = Array.isArray(window.allLogs) ? window.allLogs : [];
+                const content = logs.length > 0
+                    ? logs.join('\n')
+                    : ("VTuber Forge Log — " + new Date().toISOString() + "\n(Kosong)");
+                const filename = `vtuber_debug_${Date.now()}.log`;
+                if (typeof window.downloadNative === 'function') {
+                    window.downloadNative(filename, content);
+                }
+                setSaveLoadStatus("✓ Debug log disimpan: " + filename);
+            };
+        }
     }
+    window.bindSaveLogButton = bindSaveLogButton;
+    bindSaveLogButton();
 
     logSaveLoad("✅ save_load.js loaded");
 })();
