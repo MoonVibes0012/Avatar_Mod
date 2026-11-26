@@ -1,14 +1,22 @@
 /* ===== VTuber Forge — js/io/export.js ===== */
-// Helper download (AndroidBridge & browser fallback), Export OBJ, dan Screenshot
+// Helper download (DebugBridge / AndroidBridge & browser fallback), Export OBJ, dan Screenshot
 
 (function () {
     'use strict';
 
+    /**
+     * Memperbarui teks status pada bar status aplikasi jika elemen tersedia.
+     */
     function setExportStatus(msg) {
-        const el = document.getElementById('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = document.getElementById('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat log debug ke overlay debug atau konsol browser.
+     */
     function logExport(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -17,10 +25,15 @@
         }
     }
 
+    /**
+     * Mengambil instance pc.Application aktif secara aman.
+     */
     function getExportApp() {
         if (typeof window.getPcApp === 'function') {
-            const pcApp = window.getPcApp();
-            if (pcApp) return pcApp;
+            try {
+                const pcApp = window.getPcApp();
+                if (pcApp) return pcApp;
+            } catch (e) {}
         }
         if (typeof window.app !== 'undefined' && window.app) return window.app;
         try {
@@ -29,6 +42,9 @@
         return null;
     }
 
+    /**
+     * Mengambil entitas objek terpilih pada state global S secara aman.
+     */
     function getSelectedEntitySafe() {
         if (typeof window.S !== 'undefined' && window.S) return window.S.selected || null;
         try {
@@ -37,8 +53,11 @@
         return null;
     }
 
+    /**
+     * Mengonversi Uint8Array menjadi string Base64 secara bertahap untuk menghindari stack overflow.
+     */
     function uint8ArrayToBase64(uint8Array) {
-        const chunkSize = 0x8000; // 32KB per chunk
+        const chunkSize = 0x8000;
         const parts = [];
         for (let i = 0; i < uint8Array.length; i += chunkSize) {
             const slice = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
@@ -47,71 +66,128 @@
         return btoa(parts.join(''));
     }
 
+    /**
+     * Mengonversi teks UTF-8 menjadi string Base64 secara aman untuk dikirim ke bridge native.
+     */
+    function utf8TextToBase64(text) {
+        try {
+            const encoder = new TextEncoder();
+            return uint8ArrayToBase64(encoder.encode(String(text || '')));
+        } catch (e) {
+            return btoa(unescape(encodeURIComponent(String(text || ''))));
+        }
+    }
+
+    /**
+     * Menyimpan file teks melalui DebugBridge.downloadFile() atau fallback unduhan browser.
+     */
     function downloadNative(filename, content) {
+        const safeName = filename || 'export.txt';
+        const textStr = String(content || '');
+
+        if (window.DebugBridge && typeof window.DebugBridge.downloadFile === 'function') {
+            try {
+                const b64 = utf8TextToBase64(textStr);
+                window.DebugBridge.downloadFile(safeName, b64, 'text/plain;charset=utf-8');
+                setExportStatus("✓ File disimpan ke Downloads: " + safeName);
+                return;
+            } catch (e) {
+                logExport("DebugBridge.downloadFile error: " + e.message);
+            }
+        }
+
         if (window.AndroidBridge && typeof window.AndroidBridge.saveFile === 'function') {
             try {
-                window.AndroidBridge.saveFile(filename, content);
-                setExportStatus("✓ File disimpan ke Downloads: " + filename);
+                window.AndroidBridge.saveFile(safeName, textStr);
+                setExportStatus("✓ File disimpan ke Downloads: " + safeName);
                 return;
             } catch (e) {
                 logExport("AndroidBridge.saveFile error: " + e.message);
             }
         }
+
         try {
-            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const blob = new Blob([textStr], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = filename;
+            a.download = safeName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setExportStatus("✓ File diunduh: " + filename);
+            setExportStatus("✓ File diunduh: " + safeName);
         } catch (e) {
             setExportStatus("⚠ Gagal download: " + e.message);
         }
     }
     window.downloadNative = downloadNative;
 
+    /**
+     * Menyimpan file biner melalui DebugBridge.downloadFile() atau fallback unduhan browser.
+     */
     function downloadBinary(filename, uint8Array, mimeType) {
+        const safeName = filename || 'export.bin';
         const safeMime = mimeType || 'application/octet-stream';
         const bytes = (uint8Array instanceof Uint8Array) ? uint8Array : new Uint8Array(uint8Array);
+
+        if (window.DebugBridge && typeof window.DebugBridge.downloadFile === 'function') {
+            try {
+                const base64 = uint8ArrayToBase64(bytes);
+                window.DebugBridge.downloadFile(safeName, base64, safeMime);
+                setExportStatus("✓ File binary disimpan ke Downloads: " + safeName);
+                return;
+            } catch (e) {
+                logExport("DebugBridge.downloadFile binary error: " + e.message);
+            }
+        }
+
         if (window.AndroidBridge && typeof window.AndroidBridge.saveBinaryFile === 'function') {
             try {
                 const base64 = uint8ArrayToBase64(bytes);
-                window.AndroidBridge.saveBinaryFile(filename, base64, safeMime);
-                setExportStatus("✓ File binary disimpan ke Downloads: " + filename);
+                window.AndroidBridge.saveBinaryFile(safeName, base64, safeMime);
+                setExportStatus("✓ File binary disimpan ke Downloads: " + safeName);
                 return;
             } catch (e) {
                 logExport("AndroidBridge.saveBinaryFile error: " + e.message);
             }
         }
+
         try {
             const blob = new Blob([bytes], { type: safeMime });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = filename;
+            a.download = safeName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setExportStatus("✓ File binary diunduh: " + filename);
+            setExportStatus("✓ File binary diunduh: " + safeName);
         } catch (e) {
             setExportStatus("⚠ Gagal download binary: " + e.message);
         }
     }
     window.downloadBinary = downloadBinary;
 
+    /**
+     * Mengekspor geometri objek terpilih ke format Wavefront OBJ.
+     */
     function exportOBJ() {
         const pcApp = getExportApp();
-        if (!pcApp || !pcApp.root) return alert("Scene belum siap.");
+        if (!pcApp || !pcApp.root) {
+            setExportStatus("⚠ Scene belum siap.");
+            return;
+        }
         const selected = getSelectedEntitySafe();
-        if (!selected) return alert("Pilih objek dulu!");
+        if (!selected) {
+            setExportStatus("⚠ Pilih objek dulu sebelum Export OBJ!");
+            return;
+        }
         const renderComp = typeof selected.findComponent === 'function' ? selected.findComponent('render') : null;
         if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
-            return alert("Objek tidak punya mesh untuk di-export ke OBJ.");
+            setExportStatus("⚠ Objek tidak punya mesh untuk di-export ke OBJ.");
+            return;
         }
 
         let objStr = `# VTuber Forge OBJ Export\n# Object: ${selected.name || 'Object'}\n\n`;
@@ -144,7 +220,8 @@
         });
 
         if (!hasAnyGeometry) {
-            return alert("Data posisi/index mesh kosong atau terkompresi.");
+            setExportStatus("⚠ Data posisi/index mesh kosong atau terkompresi.");
+            return;
         }
 
         const cleanName = (selected.name || 'model').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -152,14 +229,20 @@
     }
     window.exportOBJ = exportOBJ;
 
-    const xObjBtn = document.getElementById('x-obj');
-    if (xObjBtn) xObjBtn.onclick = exportOBJ;
-
+    /**
+     * Mengambil tangkapan layar canvas WebGL dan menyimpannya sebagai file PNG.
+     */
     function takeScreenshot() {
         const pcApp = getExportApp();
-        if (!pcApp || !pcApp.graphicsDevice) return alert("Scene belum siap.");
+        if (!pcApp || !pcApp.graphicsDevice) {
+            setExportStatus("⚠ Scene belum siap.");
+            return;
+        }
         const canvas = document.getElementById('gl') || pcApp.graphicsDevice.canvas;
-        if (!canvas) return alert("Canvas tidak ditemukan.");
+        if (!canvas) {
+            setExportStatus("⚠ Canvas tidak ditemukan.");
+            return;
+        }
 
         try {
             if (typeof pcApp.render === 'function') pcApp.render();
@@ -174,10 +257,25 @@
             downloadBinary(`vtuber_screenshot_${Date.now()}.png`, bytes, 'image/png');
         } catch (e) {
             logExport("Screenshot error: " + e.message);
-            alert("Gagal mengambil screenshot: " + e.message);
+            setExportStatus("⚠ Gagal mengambil screenshot: " + e.message);
         }
     }
     window.takeScreenshot = takeScreenshot;
+
+    /**
+     * Menghubungkan tombol Export OBJ setelah panel dirender.
+     */
+    function bindExportControls() {
+        try {
+            const xObjBtn = document.getElementById('x-obj');
+            if (xObjBtn) xObjBtn.onclick = exportOBJ;
+        } catch (e) {
+            logExport("bindExportControls error: " + e.message);
+        }
+    }
+
+    bindExportControls();
+    window.__vtfBindExportControls = bindExportControls;
 
     logExport("✅ export.js loaded");
 })();
