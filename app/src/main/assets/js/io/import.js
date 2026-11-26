@@ -81,7 +81,6 @@
             return;
         }
 
-        // Pengecekan awal: wajib ada model terpilih sebelum membaca file DDS.
         const target = (st && st.selected) ? st.selected : null;
         if (!target) {
             notifyImportError('Pilih model (VRM/GLB/Box) terlebih dahulu di layar, baru import file DDS!');
@@ -184,14 +183,20 @@
                 ent.render.meshInstances = [new pc.MeshInstance(m, mat)];
                 ent.setPosition(0, 1, 0);
 
-                ent._meshCache = {
-                    positions: Array.from(pos),
-                    indices: Array.from(idx),
+                // Standarisasi _meshCache ke format Array [{ pos, idx, uvs, normals }]
+                const cacheEntry = {
+                    pos: Array.from(pos),
+                    idx: Array.from(idx),
                     uvs: Array.from(uv),
                     normals: Array.from(norm)
                 };
+                ent._meshCache = [cacheEntry];
                 ent._isObj = true;
-                if (Array.isArray(window.meshCachePool)) window.meshCachePool.push(ent._meshCache);
+                if (window.meshCachePool && typeof window.meshCachePool.set === 'function') {
+                    window.meshCachePool.set(ent.name, ent._meshCache);
+                } else if (Array.isArray(window.meshCachePool)) {
+                    window.meshCachePool.push(cacheEntry);
+                }
 
                 pcApp.root.addChild(ent);
                 st.objects.push(ent);
