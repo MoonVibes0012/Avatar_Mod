@@ -22,15 +22,21 @@
         row1.appendChild(b1);
         row1.appendChild(document.createTextNode(d.renderer || 'WebGL'));
 
+        const activePrec = d.precision || 'mediump';
+        const prefPrec = s.precision || 'mediump';
+        const precStatus = (activePrec !== prefPrec)
+            ? `${activePrec} (preferensi: ${prefPrec}, hanya info)`
+            : `${activePrec} (sesuai preferensi)`;
+
         const row2 = document.createElement('div');
         const b2 = document.createElement('strong');
         b2.textContent = 'DPR Aktif: ';
         const b3 = document.createElement('strong');
-        b3.textContent = 'Precision: ';
+        b3.textContent = 'Precision Engine: ';
         row2.appendChild(b2);
         row2.appendChild(document.createTextNode(Number(d.maxPixelRatio || s.maxPixelRatio || 1).toFixed(2) + ' | '));
         row2.appendChild(b3);
-        row2.appendChild(document.createTextNode((d.precision || s.precision || 'mediump') + (d.precisionNeedsReload ? ' (reload utk ubah)' : '')));
+        row2.appendChild(document.createTextNode(precStatus));
 
         const row3 = document.createElement('div');
         const b4 = document.createElement('strong');
@@ -85,11 +91,12 @@
             '    <input id="gpuDprRange" type="range" min="0.75" max="2.5" step="0.25" value="1.5" style="width:100%;">',
             '  </div>',
             '  <div style="margin-bottom:10px;">',
-            '    <label for="gpuPrecisionSelect" style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Shader Precision (Preferensi)</label>',
+            '    <label for="gpuPrecisionSelect" style="display:block;margin-bottom:4px;color:#94a3b8;font-size:12px;">Preferensi Precision Shader (Catatan Profil)</label>',
             '    <select id="gpuPrecisionSelect" style="width:100%;padding:7px 8px;border-radius:6px;background:#0e1017;color:#fff;border:1px solid #333a52;">',
-            '      <option value="mediump">mediump (Lebih stabil & hemat GPU)</option>',
-            '      <option value="highp">highp (Presisi tinggi)</option>',
+            '      <option value="mediump">mediump (Preferensi hemat GPU)</option>',
+            '      <option value="highp">highp (Preferensi presisi tinggi)</option>',
             '    </select>',
+            '    <div style="margin-top:3px;font-size:10px;color:#64748b;">Presisi shader aktual ditentukan otomatis oleh driver WebGL perangkat.</div>',
             '  </div>',
             '  <div style="margin-bottom:10px;">',
             '    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;">',
