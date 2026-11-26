@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/import.js ===== */
-// Koordinator import aset (.OBJ, .DDS, & delegasi .GLB/.VRM/.GLTF ke glb_loader.js)
+// Koordinator import aset (.OBJ, .DDS, & delegasi .GLB/.VRM ke glb_loader.js)
 
 (function () {
     'use strict';
@@ -95,7 +95,6 @@
                 const buf = ev.target.result;
                 const ddsTex = window.VtfDdsLoader.createTexture(pcApp.graphicsDevice, buf, file.name);
 
-                // Jangan buat kubus otomatis. Lempar error jika tidak ada model terpilih.
                 if (!target) {
                     throw new Error('Pilih model (VRM/GLB/Box) terlebih dahulu di layar, baru import file DDS!');
                 }
@@ -174,7 +173,6 @@
                 m.update();
 
                 st.cnt = st.cnt || 1;
-                // Gunakan st.objects (bukan st.objs) untuk menyimpan objek baru.
                 st.objects = st.objects || [];
                 const ent = new pc.Entity(file.name.replace(/\.obj$/i, '') + '_' + (st.cnt++));
                 const mat = new pc.StandardMaterial();
@@ -222,7 +220,7 @@
             importDdsFile(f);
         } else if (name.endsWith('.obj')) {
             importOBJ(f);
-        } else if (name.endsWith('.glb') || name.endsWith('.vrm') || name.endsWith('.gltf')) {
+        } else if (name.endsWith('.glb') || name.endsWith('.vrm')) {
             if (typeof window.importGLB === 'function') {
                 setImportStatus('⏳ Memuat model: ' + f.name + '...');
                 window.importGLB(f);
