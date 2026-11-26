@@ -30,7 +30,7 @@
                 '    <button type="button" id="importMenu">Import File</button>',
                 '    <button type="button" id="loadSceneBtn">Load JSON</button>',
                 '    <button type="button" id="x-obj">Export OBJ</button>',
-                '    <button type="button" id="x-vrm">Export VRM</button>',
+                '    <button type="button" id="x-vrm" title="Ekspor geometri mesh statis ke format GLB">Export GLB (Mesh)</button>',
                 '  </div>',
                 '  <div class="row" style="margin-top:6px;">',
                 '    <button type="button" id="saveLogBtn" style="flex:1;">📄 Save Debug Log</button>',
