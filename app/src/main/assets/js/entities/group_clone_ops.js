@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/entities/group_clone_ops.js ===== */
-// Operasi Duplicate & Group/Ungroup entitas pada scene
+// Operasi Duplicate & Group/Ungroup entitas pada scene (termasuk dukungan Skinned & Morph)
 
 (function () {
     'use strict';
@@ -27,6 +27,13 @@
             if (a) return a;
         }
         return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
+    }
+
+    function getObjectsList(st) {
+        if (!st) return [];
+        if (Array.isArray(st.objects)) return st.objects;
+        st.objects = Array.isArray(st.objs) ? st.objs : [];
+        return st.objects;
     }
 
     function commitHistorySafe() {
@@ -76,38 +83,96 @@
         }
     }
 
-    function cloneEntityRecursive(src, stateObj) {
+    function cloneMeshCacheSafe(rawCache) {
+        if (!rawCache) return null;
+        const list = Array.isArray(rawCache) ? rawCache : [rawCache];
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+            const item = list[i];
+            if (!item || typeof item !== 'object') continue;
+            const posSrc = item.pos || item.positions;
+            if (!posSrc || !posSrc.length) continue;
+            const idxSrc = item.idx || item.indices || [];
+            const uvSrc = item.uvs || [];
+            const nrmSrc = item.normals || [];
+            out.push({
+                pos: Array.from(posSrc),
+                idx: Array.from(idxSrc),
+                uvs: Array.from(uvSrc),
+                normals: Array.from(nrmSrc)
+            });
+        }
+        return out.length > 0 ? out : null;
+    }
+
+    function cloneEntityRecursive(src, stateObj, isRoot, nodeMap, pendingSkinBindings) {
         if (!src || typeof pc === 'undefined') return null;
         const idx = stateObj ? (stateObj.cnt++) : Math.floor(Math.random() * 10000);
-        const copy = new pc.Entity((src.name || 'Obj') + '_Copy_' + idx);
+        const copyName = isRoot ? ((src.name || 'Obj') + '_Copy_' + idx) : (src.name || ('Node_' + idx));
+        const copy = new pc.Entity(copyName);
+
+        if (nodeMap) nodeMap.set(src, copy);
 
         const pos = src.getLocalPosition();
         const rot = src.getLocalEulerAngles();
         const scl = src.getLocalScale();
-        copy.setLocalPosition(pos.x + 0.35, pos.y, pos.z);
+        copy.setLocalPosition(isRoot ? (pos.x + 0.35) : pos.x, pos.y, pos.z);
         copy.setLocalEulerAngles(rot.x, rot.y, rot.z);
         copy.setLocalScale(scl.x, scl.y, scl.z);
+
+        let firstClonedMorphInst = null;
 
         if (src.render && Array.isArray(src.render.meshInstances) && src.render.meshInstances.length > 0) {
             const clonedMis = src.render.meshInstances.map((mi) => {
                 const mat = cloneMaterialSafe(mi.material);
-                return new pc.MeshInstance(mi.mesh, mat);
+                const newMi = new pc.MeshInstance(mi.mesh, mat);
+
+                // Salin MorphInstance & weight aktif jika ada
+                if (mi.morphInstance && mi.mesh && mi.mesh.morph && typeof pc.MorphInstance === 'function') {
+                    try {
+                        const newMorph = new pc.MorphInstance(mi.mesh.morph);
+                        const targetCount = (mi.mesh.morph.targets && mi.mesh.morph.targets.length) || 0;
+                        for (let t = 0; t < targetCount; t++) {
+                            if (typeof mi.morphInstance.getWeight === 'function' && typeof newMorph.setWeight === 'function') {
+                                newMorph.setWeight(t, mi.morphInstance.getWeight(t) || 0);
+                            }
+                        }
+                        newMi.morphInstance = newMorph;
+                        if (!firstClonedMorphInst) firstClonedMorphInst = newMorph;
+                    } catch (e) {}
+                }
+
+                // Jadwalkan pengikatan ulang SkinInstance setelah seluruh hierarki bone selesai dikloning
+                if (mi.skinInstance && mi.skinInstance.skin && pendingSkinBindings) {
+                    pendingSkinBindings.push({
+                        meshInstance: newMi,
+                        srcSkinInstance: mi.skinInstance
+                    });
+                }
+
+                return newMi;
             });
             copy.addComponent('render', { type: 'asset' });
             copy.render.meshInstances = clonedMis;
         }
 
-        if (src._meshCache) {
-            copy._meshCache = {
-                positions: Array.isArray(src._meshCache.positions) ? src._meshCache.positions.slice() : [],
-                indices: Array.isArray(src._meshCache.indices) ? src._meshCache.indices.slice() : [],
-                uvs: Array.isArray(src._meshCache.uvs) ? src._meshCache.uvs.slice() : [],
-                normals: Array.isArray(src._meshCache.normals) ? src._meshCache.normals.slice() : []
-            };
-            if (Array.isArray(window.meshCachePool)) {
-                window.meshCachePool.push(copy._meshCache);
+        const clonedCache = cloneMeshCacheSafe(src._meshCache);
+        if (clonedCache) {
+            copy._meshCache = clonedCache;
+            if (window.meshCachePool && typeof window.meshCachePool.set === 'function') {
+                window.meshCachePool.set(copy.name, copy._meshCache);
+            } else if (Array.isArray(window.meshCachePool)) {
+                window.meshCachePool.push(clonedCache[0]);
             }
         }
+
+        if (Array.isArray(src._morphNames) && src._morphNames.length > 0) {
+            copy._morphNames = src._morphNames.slice();
+        }
+        if (firstClonedMorphInst) {
+            copy._morphInstance = firstClonedMorphInst;
+        }
+
         copy._isObj = !!src._isObj;
         copy._isGLB = !!src._isGLB;
         copy._animSpin = !!src._animSpin;
@@ -116,11 +181,33 @@
 
         const children = src.children || [];
         for (let i = 0; i < children.length; i++) {
-            const childCopy = cloneEntityRecursive(children[i], stateObj);
+            const childCopy = cloneEntityRecursive(children[i], stateObj, false, nodeMap, pendingSkinBindings);
             if (childCopy) copy.addChild(childCopy);
         }
 
         return copy;
+    }
+
+    function bindClonedSkins(nodeMap, pendingSkinBindings) {
+        if (!Array.isArray(pendingSkinBindings) || pendingSkinBindings.length === 0) return;
+        for (let i = 0; i < pendingSkinBindings.length; i++) {
+            const item = pendingSkinBindings[i];
+            const srcSi = item.srcSkinInstance;
+            if (!srcSi || !srcSi.skin) continue;
+
+            try {
+                const newSi = new pc.SkinInstance(srcSi.skin);
+                if (!newSi.skin) newSi.skin = srcSi.skin;
+                const srcBones = Array.isArray(srcSi.bones) ? srcSi.bones : [];
+                newSi.bones = srcBones.map((b) => (nodeMap && nodeMap.has(b)) ? nodeMap.get(b) : b);
+                if (typeof newSi.updateMatrices === 'function') {
+                    newSi.updateMatrices();
+                }
+                item.meshInstance.skinInstance = newSi;
+            } catch (e) {
+                console.warn('Gagal menyalin SkinInstance saat duplikasi:', e);
+            }
+        }
     }
 
     function duplicateSelected() {
@@ -131,14 +218,18 @@
             return null;
         }
 
-        const copy = cloneEntityRecursive(st.selected, st);
+        const nodeMap = new Map();
+        const pendingSkinBindings = [];
+        const copy = cloneEntityRecursive(st.selected, st, true, nodeMap, pendingSkinBindings);
         if (!copy) return null;
+
+        bindClonedSkins(nodeMap, pendingSkinBindings);
 
         const parent = st.selected.parent || pcApp.root;
         parent.addChild(copy);
-        if (Array.isArray(st.objs)) {
-            st.objs.push(copy);
-        }
+
+        const objs = getObjectsList(st);
+        objs.push(copy);
 
         refreshSceneUiSafe(copy);
         setOpsStatus('✓ Diduplikasi: ' + (copy.name || 'Objek'));
@@ -164,8 +255,9 @@
         grp.addChild(target);
         target.setLocalPosition(0, 0, 0);
 
-        if (Array.isArray(st.objs) && st.objs.indexOf(grp) === -1) {
-            st.objs.push(grp);
+        const objs = getObjectsList(st);
+        if (objs.indexOf(grp) === -1) {
+            objs.push(grp);
         }
 
         refreshSceneUiSafe(grp);
@@ -202,9 +294,10 @@
             if (!firstChild) firstChild = ch;
         }
 
-        if (grp !== pcApp.root && Array.isArray(st.objs)) {
-            const idx = st.objs.indexOf(grp);
-            if (idx !== -1) st.objs.splice(idx, 1);
+        const objs = getObjectsList(st);
+        if (grp !== pcApp.root) {
+            const idx = objs.indexOf(grp);
+            if (idx !== -1) objs.splice(idx, 1);
             if (grp.parent) grp.parent.removeChild(grp);
             try { grp.destroy(); } catch (e) {}
         }
