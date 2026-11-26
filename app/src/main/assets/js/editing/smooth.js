@@ -1,14 +1,22 @@
 /* ===== VTuber Forge — js/editing/smooth.js ===== */
-// Algoritma smoothing mesh
+// Algoritma smoothing mesh & re-binding tombol panel
 
 (function () {
     'use strict';
 
+    /**
+     * Memperbarui teks status pada bar status aplikasi bila elemen tersedia.
+     */
     function setSmoothStatus(msg) {
-        const el = document.getElementById('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = document.getElementById('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat log debug ke overlay debug atau konsol browser.
+     */
     function logSmooth(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -17,6 +25,20 @@
         }
     }
 
+    /**
+     * Mengambil state scene global `S` secara aman.
+     */
+    function getSmoothState() {
+        if (typeof window.S !== 'undefined' && window.S) return window.S;
+        try {
+            if (typeof S !== 'undefined' && S) return S;
+        } catch (e) {}
+        return null;
+    }
+
+    /**
+     * Menyinkronkan cache geometri entitas setelah perubahan posisi vertex akibat smoothing.
+     */
     function syncSmoothCacheSafe(entity, mesh, miIndex) {
         if (typeof window.syncPrimaryMeshCache === 'function') {
             try {
@@ -44,6 +66,9 @@
         } catch (e) {}
     }
 
+    /**
+     * Menjalankan satu iterasi Laplacian smoothing pada sebuah mesh statis.
+     */
     function smoothSingleMesh(mesh, mi, maxVerts) {
         if (!mesh || !mesh.getPositions || !mesh.getIndices) return false;
         const pos = mesh.getPositions();
@@ -96,74 +121,103 @@
         return true;
     }
 
-    const smoothBtn = document.getElementById('smooth');
-    if (smoothBtn) {
-        smoothBtn.onclick = () => {
-            if (!S.selected || typeof S.selected.findComponent !== 'function') return alert("Pilih objek dulu!");
-            if (S.isSmoothing) return;
+    /**
+     * Menjalankan smoothing pada objek terpilih beserta validasi mesh statis dan batas vertex.
+     */
+    function applySmoothToSelected() {
+        const st = getSmoothState();
+        const smoothBtn = document.getElementById('smooth');
+        if (!st || !st.selected || typeof st.selected.findComponent !== 'function') {
+            setSmoothStatus("⚠ Pilih objek dulu sebelum smooth!");
+            return;
+        }
+        if (st.isSmoothing) return;
 
-            const renderComp = S.selected.findComponent('render');
-            if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) return;
-            if (renderComp.meshInstances.some(mi => mi && mi.skinInstance != null)) {
-                return alert("Model dengan tulang (Skinned Mesh) tidak bisa di-smooth.");
-            }
+        const renderComp = st.selected.findComponent('render');
+        if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) {
+            setSmoothStatus("⚠ Objek tidak memiliki mesh.");
+            return;
+        }
+        if (renderComp.meshInstances.some(mi => mi && mi.skinInstance != null)) {
+            setSmoothStatus("⚠ Model dengan tulang (Skinned Mesh) tidak bisa di-smooth.");
+            return;
+        }
 
-            const validInstances = renderComp.meshInstances.filter(mi => mi && mi.mesh);
-            if (validInstances.length === 0) return;
+        const validInstances = renderComp.meshInstances.filter(mi => mi && mi.mesh);
+        if (validInstances.length === 0) return;
 
-            const maxVerts = (typeof window.CONFIG !== 'undefined' && window.CONFIG && window.CONFIG.MAX_SMOOTH_VERTEX)
-                ? window.CONFIG.MAX_SMOOTH_VERTEX
-                : 20000;
+        const maxVerts = (typeof window.CONFIG !== 'undefined' && window.CONFIG && window.CONFIG.MAX_SMOOTH_VERTEX)
+            ? window.CONFIG.MAX_SMOOTH_VERTEX
+            : 20000;
 
-            try {
-                for (let i = 0; i < validInstances.length; i++) {
-                    const m = validInstances[i].mesh;
-                    const pos = m.getPositions ? m.getPositions() : null;
-                    const idx = m.getIndices ? m.getIndices() : null;
-                    if (!pos || !idx || pos.length === 0 || idx.length < 3) {
-                        throw new Error("Mesh data kosong atau compressed (Draco).");
-                    }
-                    const count = Math.floor(pos.length / 3);
-                    if (count > maxVerts) {
-                        return alert("Mesh terlalu besar untuk di-smooth (>" + maxVerts + " vertex).");
-                    }
+        try {
+            for (let i = 0; i < validInstances.length; i++) {
+                const m = validInstances[i].mesh;
+                const pos = m.getPositions ? m.getPositions() : null;
+                const idx = m.getIndices ? m.getIndices() : null;
+                if (!pos || !idx || pos.length === 0 || idx.length < 3) {
+                    throw new Error("Mesh data kosong atau compressed (Draco).");
                 }
-
-                S.isSmoothing = true;
-                setSmoothStatus("Memproses Smooth...");
-                smoothBtn.disabled = true;
-                const targetEntity = S.selected;
-
-                requestAnimationFrame(() => {
-                    try {
-                        let smoothedCount = 0;
-                        validInstances.forEach((mi, idxSlot) => {
-                            if (smoothSingleMesh(mi.mesh, mi, maxVerts)) {
-                                smoothedCount++;
-                                syncSmoothCacheSafe(targetEntity, mi.mesh, idxSlot);
-                            }
-                        });
-
-                        if (smoothedCount > 0) {
-                            if (typeof saveState === 'function') saveState();
-                            setSmoothStatus("Mesh smoothed (" + smoothedCount + " part): " + (targetEntity.name || "Objek"));
-                        } else {
-                            setSmoothStatus("Tidak ada mesh yang dapat di-smooth.");
-                        }
-                    } catch (e) {
-                        logSmooth("Smooth error: " + e.message);
-                        setSmoothStatus("Smooth gagal: " + e.message);
-                    } finally {
-                        S.isSmoothing = false;
-                        smoothBtn.disabled = false;
-                    }
-                });
-            } catch (e) {
-                logSmooth("Smooth outer error: " + e.message);
-                S.isSmoothing = false;
-                smoothBtn.disabled = false;
-                setSmoothStatus("Smooth gagal: mesh compressed/korup.");
+                const count = Math.floor(pos.length / 3);
+                if (count > maxVerts) {
+                    setSmoothStatus("⚠ Mesh terlalu besar untuk di-smooth (>" + maxVerts + " vertex).");
+                    return;
+                }
             }
-        };
+
+            st.isSmoothing = true;
+            setSmoothStatus("Memproses Smooth...");
+            if (smoothBtn) smoothBtn.disabled = true;
+            const targetEntity = st.selected;
+
+            requestAnimationFrame(() => {
+                try {
+                    let smoothedCount = 0;
+                    validInstances.forEach((mi, idxSlot) => {
+                        if (smoothSingleMesh(mi.mesh, mi, maxVerts)) {
+                            smoothedCount++;
+                            syncSmoothCacheSafe(targetEntity, mi.mesh, idxSlot);
+                        }
+                    });
+
+                    if (smoothedCount > 0) {
+                        if (typeof window.saveState === 'function') window.saveState();
+                        setSmoothStatus("✓ Mesh smoothed (" + smoothedCount + " part): " + (targetEntity.name || "Objek"));
+                    } else {
+                        setSmoothStatus("Tidak ada mesh yang dapat di-smooth.");
+                    }
+                } catch (e) {
+                    logSmooth("Smooth error: " + e.message);
+                    setSmoothStatus("⚠ Smooth gagal: " + e.message);
+                } finally {
+                    st.isSmoothing = false;
+                    const btnNow = document.getElementById('smooth');
+                    if (btnNow) btnNow.disabled = false;
+                }
+            });
+        } catch (e) {
+            logSmooth("Smooth outer error: " + e.message);
+            st.isSmoothing = false;
+            if (smoothBtn) smoothBtn.disabled = false;
+            setSmoothStatus("⚠ Smooth gagal: mesh compressed/korup.");
+        }
     }
+    window.applySmoothToSelected = applySmoothToSelected;
+
+    /**
+     * Menghubungkan event klik tombol #smooth setelah panel dirender.
+     */
+    function bindSmoothControls() {
+        try {
+            const smoothBtn = document.getElementById('smooth');
+            if (smoothBtn) {
+                smoothBtn.onclick = applySmoothToSelected;
+            }
+        } catch (e) {
+            logSmooth("bindSmoothControls error: " + e.message);
+        }
+    }
+
+    bindSmoothControls();
+    window.__vtfBindSmoothControls = bindSmoothControls;
 })();
