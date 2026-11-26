@@ -17,7 +17,11 @@
     let activePresetKey = null;
 
     function byId(id) {
-        return document.getElementById(id);
+        try {
+            return document.getElementById(id);
+        } catch (e) {
+            return null;
+        }
     }
 
     function setExprStatus(msg) {
@@ -73,11 +77,11 @@
     function applyExpressionPreset(presetKey) {
         const selected = getSelectedModel();
         if (!selected) {
-            alert("Pilih model dulu sebelum menerapkan ekspresi!");
+            setExprStatus("⚠ Pilih model dulu sebelum menerapkan ekspresi!");
             return;
         }
         if (!selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
-            alert("Model ini tidak memiliki blendshape / morph targets.");
+            setExprStatus("⚠ Model ini tidak memiliki blendshape / morph targets.");
             return;
         }
 
@@ -161,14 +165,14 @@
     function saveCustomExpression() {
         const selected = getSelectedModel();
         if (!selected || !selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
-            alert("Pilih model yang memiliki morph targets dulu!");
+            setExprStatus("⚠ Pilih model yang memiliki morph targets dulu!");
             return;
         }
 
         const nameInput = byId('customExprName');
         const rawName = nameInput ? nameInput.value.trim() : '';
         if (!rawName) {
-            alert("Masukkan nama ekspresi kustom terlebih dahulu.");
+            setExprStatus("⚠ Masukkan nama ekspresi kustom terlebih dahulu.");
             return;
         }
 
@@ -189,28 +193,45 @@
         logExpr("Saved custom expression: " + rawName);
     }
 
-    document.querySelectorAll('.expr-btn[data-expr]').forEach(btn => {
-        btn.onclick = () => {
-            const key = btn.getAttribute('data-expr');
-            applyExpressionPreset(key);
-        };
-    });
+    function bindExpressionControls() {
+        try {
+            document.querySelectorAll('#exprButtons button[data-expr], .expr-btn[data-expr]').forEach(btn => {
+                btn.onclick = () => {
+                    const key = btn.getAttribute('data-expr');
+                    applyExpressionPreset(key);
+                };
+            });
 
-    const resetExprBtn = byId('resetExprBtn');
-    if (resetExprBtn) {
-        resetExprBtn.onclick = () => {
-            const selected = getSelectedModel();
-            if (!selected) return alert("Pilih model dulu!");
-            resetAllMorphWeights(selected);
-            updateExprButtonState(null);
-            setExprStatus("Semua ekspresi / morph di-reset.");
-        };
+            const resetExprBtn = byId('resetExprBtn');
+            if (resetExprBtn) {
+                resetExprBtn.onclick = () => {
+                    const selected = getSelectedModel();
+                    if (!selected) {
+                        setExprStatus("⚠ Pilih model dulu!");
+                        return;
+                    }
+                    resetAllMorphWeights(selected);
+                    updateExprButtonState('neutral');
+                    setExprStatus("Semua ekspresi / morph di-reset.");
+                };
+            }
+
+            const saveCustomBtn = byId('saveCustomExprBtn');
+            if (saveCustomBtn) {
+                saveCustomBtn.onclick = saveCustomExpression;
+            }
+
+            renderCustomExpressions();
+            if (activePresetKey) {
+                updateExprButtonState(activePresetKey);
+            }
+        } catch (err) {
+            logExpr("bindExpressionControls warning: " + err.message);
+        }
     }
 
-    const saveCustomBtn = byId('saveCustomExprBtn');
-    if (saveCustomBtn) {
-        saveCustomBtn.onclick = saveCustomExpression;
-    }
+    bindExpressionControls();
+    window.__vtfBindExpressionControls = bindExpressionControls;
 
     logExpr("✅ expressions.js loaded");
 })();
