@@ -18,15 +18,30 @@
     let targetHeadRot = { x: 0, y: 0, z: 0 };
     let currentHeadRot = { x: 0, y: 0, z: 0 };
 
+    /**
+     * Mengambil elemen DOM berdasarkan ID secara aman.
+     */
     function byId(id) {
-        return document.getElementById(id);
+        try {
+            return document.getElementById(id);
+        } catch (e) {
+            return null;
+        }
     }
 
+    /**
+     * Memperbarui teks status pada elemen #status jika tersedia.
+     */
     function setFaceStatus(msg) {
-        const el = byId('status');
-        if (el) el.textContent = msg;
+        try {
+            const el = byId('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
     }
 
+    /**
+     * Mencatat log debug ke overlay debug atau konsol browser.
+     */
     function logFace(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -35,6 +50,9 @@
         }
     }
 
+    /**
+     * Mengambil entitas model terpilih pada state global S secara aman.
+     */
     function getFaceSelected() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
@@ -43,6 +61,9 @@
         return null;
     }
 
+    /**
+     * Menyinkronkan status visual tombol Face Tracking di toolbar dan panel.
+     */
     function updateFaceButtonsState(active) {
         const btnTop = byId('btnFaceTrack');
         const btnPanel = byId('btnFaceTrackToggle');
@@ -50,6 +71,9 @@
         if (btnPanel) btnPanel.classList.toggle('active', !!active);
     }
 
+    /**
+     * Mencari tulang kepala (Head) dan leher (Neck) dari hierarki skin entitas terpilih.
+     */
     function findHeadAndNeckBones(entity) {
         headBone = null;
         neckBone = null;
@@ -86,6 +110,9 @@
         }
     }
 
+    /**
+     * Menerapkan interpolasi rotasi kepala hasil deteksi wajah ke tulang kepala/leher.
+     */
     function applyFaceHeadRotation() {
         const selected = getFaceSelected();
         if (!selected || !faceTrackingActive) return;
@@ -120,6 +147,9 @@
         }
     }
 
+    /**
+     * Memproses landmark wajah dari MediaPipe FaceMesh menggunakan Kalidokit atau fallback hidung.
+     */
     function onFaceMeshResults(results) {
         if (!faceTrackingActive) return;
 
@@ -187,6 +217,9 @@
         applyFaceHeadRotation();
     }
 
+    /**
+     * Loop pemrosesan frame video kamera secara berkala selama tracking aktif.
+     */
     async function processVideoFrameLoop() {
         if (!faceTrackingActive) return;
 
@@ -203,23 +236,26 @@
         animFrameId = requestAnimationFrame(processVideoFrameLoop);
     }
 
+    /**
+     * Memulai aliran kamera depan dan inisialisasi MediaPipe FaceMesh.
+     */
     async function startFaceTracking() {
         if (faceTrackingActive) return;
 
         const selected = getFaceSelected();
         if (!selected) {
-            alert("Pilih karakter/model VRM/GLB dulu sebelum mengaktifkan Face Tracking!");
+            setFaceStatus("⚠ Pilih karakter/model VRM/GLB dulu sebelum Face Tracking!");
             return;
         }
 
         if (typeof window.FaceMesh === 'undefined') {
-            alert("MediaPipe FaceMesh tidak tersedia di perangkat ini.");
+            setFaceStatus("⚠ MediaPipe FaceMesh tidak tersedia di perangkat ini.");
             logFace("⚠ FaceMesh undefined");
             return;
         }
 
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-            alert("Kamera tidak didukung di WebView/browser ini.");
+            setFaceStatus("⚠ Kamera tidak didukung di WebView/browser ini.");
             return;
         }
 
@@ -269,10 +305,13 @@
         } catch (err) {
             logFace("❌ Face tracking start error: " + err.message);
             stopFaceTracking();
-            alert("Gagal mengaktifkan kamera Face Tracking:\n" + err.message);
+            setFaceStatus("⚠ Gagal mengaktifkan Face Tracking: " + err.message);
         }
     }
 
+    /**
+     * Menghentikan kamera Face Tracking, membersihkan stream, dan mereset rotasi kepala.
+     */
     function stopFaceTracking() {
         faceTrackingActive = false;
         isProcessingFrame = false;
@@ -320,6 +359,9 @@
         logFace("⏹ Face tracking stopped");
     }
 
+    /**
+     * Menukar status aktif/nonaktif Face Tracking.
+     */
     function toggleFaceTracking() {
         if (faceTrackingActive) {
             stopFaceTracking();
@@ -328,11 +370,25 @@
         }
     }
 
-    const btnTop = byId('btnFaceTrack');
-    if (btnTop) btnTop.onclick = toggleFaceTracking;
+    /**
+     * Menghubungkan event klik tombol Face Tracking setelah panel dirender.
+     */
+    function bindFaceControls() {
+        try {
+            const btnTop = byId('btnFaceTrack');
+            if (btnTop) btnTop.onclick = toggleFaceTracking;
 
-    const btnPanel = byId('btnFaceTrackToggle');
-    if (btnPanel) btnPanel.onclick = toggleFaceTracking;
+            const btnPanel = byId('btnFaceTrackToggle');
+            if (btnPanel) btnPanel.onclick = toggleFaceTracking;
+
+            updateFaceButtonsState(faceTrackingActive);
+        } catch (err) {
+            logFace("bindFaceControls warning: " + err.message);
+        }
+    }
+
+    bindFaceControls();
+    window.__vtfBindFaceControls = bindFaceControls;
 
     window.addEventListener('beforeunload', () => {
         if (faceTrackingActive) stopFaceTracking();
@@ -342,6 +398,7 @@
         start: startFaceTracking,
         stop: stopFaceTracking,
         toggle: toggleFaceTracking,
+        bindUI: bindFaceControls,
         isActive: () => faceTrackingActive
     };
 
