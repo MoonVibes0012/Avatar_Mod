@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/ui/boot.js ===== */
-// Inisialisasi UI utama: render panel kiri & kanan, toggle panel, & re-bind kontrol
+// Inisialisasi UI utama: render panel kiri & kanan, toggle panel, & re-bind seluruh kontrol
 
 (function () {
     'use strict';
@@ -159,12 +159,18 @@
     window.__vtfTogglePanel = togglePanel;
 
     /**
-     * Mengikat ulang kontrol subsistem setelah template panel dirender atau diperbarui.
+     * Mengikat ulang seluruh kontrol subsistem setelah template panel dirender atau diperbarui.
      */
     function rebindSubSystems() {
         const binders = [
             function () {
+                if (typeof window.__vtfBindCreateControls === 'function') window.__vtfBindCreateControls();
+            },
+            function () {
                 if (typeof window.__vtfBindFileImport === 'function') window.__vtfBindFileImport();
+            },
+            function () {
+                if (typeof window.__vtfBindExportControls === 'function') window.__vtfBindExportControls();
             },
             function () {
                 if (typeof window.__vtfBindTransformInputs === 'function') window.__vtfBindTransformInputs();
@@ -179,7 +185,19 @@
                 if (typeof window.__vtfBindExpressionControls === 'function') window.__vtfBindExpressionControls();
             },
             function () {
+                if (typeof window.__vtfBindFaceControls === 'function') window.__vtfBindFaceControls();
+            },
+            function () {
+                if (typeof window.__vtfBindSmoothControls === 'function') window.__vtfBindSmoothControls();
+            },
+            function () {
                 if (typeof window.__vtfBindSplitControls === 'function') window.__vtfBindSplitControls();
+            },
+            function () {
+                if (typeof window.__vtfBindBoneControls === 'function') window.__vtfBindBoneControls();
+            },
+            function () {
+                if (typeof window.__vtfBindDriverControls === 'function') window.__vtfBindDriverControls();
             },
             function () {
                 if (typeof window.setupVertexEditing === 'function' && window.S && window.S.selected) {
@@ -209,6 +227,7 @@
             }
         }
     }
+    window.__vtfRebindSubSystems = rebindSubSystems;
 
     /**
      * Mendaftarkan event delegation untuk tombol toggle panel, tombol tutup, dan backdrop.
