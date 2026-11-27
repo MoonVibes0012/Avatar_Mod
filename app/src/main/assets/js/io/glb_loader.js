@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Fix VEC4 Skinning Stride, Standardized _meshCache, VRM Textures, Rig BindPose & Animations)
+// Loader & Builder model .GLB / .VRM (Multi-Mesh MorphInstance, VRM 0.x/1.0 Expression Bindings, Rig BindPose & Animations)
 
 (function () {
     'use strict';
@@ -362,6 +362,156 @@
         return { mesh: mesh, skinStreamAttached: skinStreamAttached };
     }
 
+    function normalizePresetKey(rawName) {
+        const lower = String(rawName || '').trim().toLowerCase();
+        if (!lower) return '';
+        const aliasMap = {
+            joy: 'happy',
+            happy: 'happy',
+            fun: 'relaxed',
+            relaxed: 'relaxed',
+            angry: 'angry',
+            anger: 'angry',
+            sorrow: 'sad',
+            sad: 'sad',
+            surprised: 'surprised',
+            surprise: 'surprised',
+            blink: 'blink',
+            blink_l: 'blinkLeft',
+            blinkleft: 'blinkLeft',
+            blink_r: 'blinkRight',
+            blinkright: 'blinkRight',
+            neutral: 'neutral',
+            a: 'aa',
+            aa: 'aa',
+            i: 'ih',
+            ih: 'ih',
+            u: 'ou',
+            ou: 'ou',
+            e: 'ee',
+            ee: 'ee',
+            o: 'oh',
+            oh: 'oh'
+        };
+        return aliasMap[lower] || lower;
+    }
+
+    /**
+     * Membangun katalog lengkap seluruh MorphInstance across semua mesh dalam hierarki model,
+     * serta membaca binding ekspresi VRM 0.x (`blendShapeMaster`) dan VRM 1.0 (`expressions`).
+     */
+    function buildVrmExpressionCatalog(gltf, morphTargetsList, meshIdxToMorphEntries, nodeIdxToMeshIdx) {
+        const flatTargets = [];
+        const flatNames = [];
+
+        morphTargetsList.forEach((entry) => {
+            if (!entry || !entry.morphInstance || !Array.isArray(entry.names)) return;
+            const prefix = (morphTargetsList.length > 1 && entry.nodeName) ? (entry.nodeName + ':') : '';
+            entry.names.forEach((rawName, tIdx) => {
+                const label = prefix ? `${prefix}${rawName}` : rawName;
+                flatTargets.push({
+                    morphInstance: entry.morphInstance,
+                    targetIndex: tIdx,
+                    rawName: rawName,
+                    displayName: label,
+                    nodeName: entry.nodeName || '',
+                    meshIndex: entry.meshIndex
+                });
+                flatNames.push(label);
+            });
+        });
+
+        const expressionBindings = {}; // { presetKey: [{ morphInstance, targetIndex, weight }] }
+        const expressionRawMap = {};   // { originalName: [{ morphInstance, targetIndex, weight }] }
+        let vrmVersion = 'GLB (Non-VRM)';
+
+        const addBinding = (rawExprName, targetList) => {
+            if (!rawExprName || !Array.isArray(targetList) || targetList.length === 0) return;
+            const normKey = normalizePresetKey(rawExprName);
+            if (!expressionBindings[normKey]) expressionBindings[normKey] = [];
+            if (!expressionRawMap[rawExprName]) expressionRawMap[rawExprName] = [];
+            targetList.forEach((b) => {
+                expressionBindings[normKey].push(b);
+                expressionRawMap[rawExprName].push(b);
+            });
+        };
+
+        // 1. VRM 0.x: gltf.extensions.VRM.blendShapeMaster.blendShapeGroups
+        const vrm0 = gltf && gltf.extensions && gltf.extensions.VRM;
+        if (vrm0) {
+            vrmVersion = 'VRM 0.x (' + (vrm0.exporterVersion || vrm0.specVersion || '0.x') + ')';
+            const groups = vrm0.blendShapeMaster && Array.isArray(vrm0.blendShapeMaster.blendShapeGroups)
+                ? vrm0.blendShapeMaster.blendShapeGroups
+                : [];
+            groups.forEach((grp) => {
+                if (!grp) return;
+                const exprName = grp.presetName && grp.presetName !== 'unknown' ? grp.presetName : grp.name;
+                const binds = Array.isArray(grp.binds) ? grp.binds : [];
+                const resolved = [];
+                binds.forEach((b) => {
+                    if (!b || b.mesh === undefined || b.index === undefined) return;
+                    const meshEntries = meshIdxToMorphEntries.get(b.mesh) || [];
+                    // VRM 0.x weight dalam skala 0..100
+                    const w = isFinite(Number(b.weight)) ? Math.max(0, Math.min(1, Number(b.weight) / 100)) : 1.0;
+                    meshEntries.forEach((me) => {
+                        if (me && me.morphInstance && b.index >= 0 && b.index < me.names.length) {
+                            resolved.push({
+                                morphInstance: me.morphInstance,
+                                targetIndex: b.index,
+                                weight: w
+                            });
+                        }
+                    });
+                });
+                addBinding(exprName, resolved);
+            });
+        }
+
+        // 2. VRM 1.0: gltf.extensions.VRMC_vrm.expressions
+        const vrm1 = gltf && gltf.extensions && gltf.extensions.VRMC_vrm;
+        if (vrm1) {
+            vrmVersion = 'VRM 1.0 (' + (vrm1.specVersion || '1.0') + ')';
+            const exprRoot = vrm1.expressions || {};
+            const collectVrm1Map = (objMap) => {
+                if (!objMap || typeof objMap !== 'object') return;
+                Object.keys(objMap).forEach((exprKey) => {
+                    const spec = objMap[exprKey];
+                    if (!spec || !Array.isArray(spec.morphTargetBinds)) return;
+                    const resolved = [];
+                    spec.morphTargetBinds.forEach((b) => {
+                        if (!b || b.node === undefined || b.index === undefined) return;
+                        const meshIdx = nodeIdxToMeshIdx.get(b.node);
+                        if (meshIdx === undefined) return;
+                        const meshEntries = meshIdxToMorphEntries.get(meshIdx) || [];
+                        // VRM 1.0 weight dalam skala 0.0..1.0
+                        const w = isFinite(Number(b.weight)) ? Math.max(0, Math.min(1, Number(b.weight))) : 1.0;
+                        meshEntries.forEach((me) => {
+                            if (me && me.morphInstance && b.index >= 0 && b.index < me.names.length) {
+                                resolved.push({
+                                    morphInstance: me.morphInstance,
+                                    targetIndex: b.index,
+                                    weight: w
+                                });
+                            }
+                        });
+                    });
+                    addBinding(exprKey, resolved);
+                });
+            };
+            collectVrm1Map(exprRoot.preset);
+            collectVrm1Map(exprRoot.custom);
+        }
+
+        return {
+            vrmVersion: vrmVersion,
+            flatTargets: flatTargets,
+            flatNames: flatNames,
+            expressionBindings: expressionBindings,
+            expressionRawMap: expressionRawMap,
+            bindingCount: Object.keys(expressionBindings).length
+        };
+    }
+
     function extractGlbAnimations(gltf, getAcc, nodeEntities, rootEnt) {
         const animAssets = [];
         const animNames = [];
@@ -575,7 +725,9 @@
                 let vtxOffset = 0;
 
                 const nodes = Array.isArray(gltf.nodes) ? gltf.nodes : [];
+                const nodeIdxToMeshIdx = new Map();
                 const nodeEntities = nodes.map((n, i) => {
+                    if (n && n.mesh !== undefined) nodeIdxToMeshIdx.set(i, n.mesh);
                     const ent = new pc.Entity((n && n.name) ? n.name : 'Node_' + i);
                     if (n && Array.isArray(n.translation) && n.translation.length >= 3) {
                         ent.setLocalPosition(n.translation[0] || 0, n.translation[1] || 0, n.translation[2] || 0);
@@ -618,8 +770,11 @@
                 }
 
                 stage = 'membangun skin & tulang';
+                let totalSkinJointSlots = 0;
                 const skins = (Array.isArray(gltf.skins) ? gltf.skins : []).map((sk) => {
-                    const bones = (Array.isArray(sk && sk.joints) ? sk.joints : [])
+                    const jointIndices = Array.isArray(sk && sk.joints) ? sk.joints : [];
+                    totalSkinJointSlots += jointIndices.length;
+                    const bones = jointIndices
                         .map((j) => nodeEntities[j])
                         .filter(Boolean);
                     if (bones.length === 0) return null;
@@ -656,8 +811,8 @@
                     };
                 });
 
-                let hasMorphs = false;
                 const morphTargetsList = [];
+                const meshIdxToMorphEntries = new Map();
 
                 stage = 'membangun mesh & morph target';
                 nodes.forEach((n, i) => {
@@ -780,7 +935,10 @@
                                         const targets = prim.targets.map((t, tIdx) => {
                                             const dPos = (t && t.POSITION !== undefined) ? getAcc(t.POSITION) : null;
                                             const dNorm = (t && t.NORMAL !== undefined) ? getAcc(t.NORMAL) : null;
-                                            const mName = targetNames[tIdx] || `Shape_${tIdx}`;
+                                            const primTargetNames = (prim.extras && Array.isArray(prim.extras.targetNames))
+                                                ? prim.extras.targetNames
+                                                : targetNames;
+                                            const mName = primTargetNames[tIdx] || targetNames[tIdx] || `Shape_${tIdx}`;
 
                                             const dPosArr = new Float32Array(numVerts * 3);
                                             if (dPos && dPos.length > 0) {
@@ -808,12 +966,18 @@
                                             mesh.update();
                                             const morphInst = new pc.MorphInstance(mesh.morph);
                                             mi.morphInstance = morphInst;
-                                            hasMorphs = true;
-                                            morphTargetsList.push({
+                                            const entryObj = {
+                                                nodeName: (ent && ent.name) || ('Mesh_' + n.mesh),
+                                                meshIndex: n.mesh,
                                                 meshInstance: mi,
                                                 morphInstance: morphInst,
                                                 names: targets.map((t) => t.name)
-                                            });
+                                            };
+                                            morphTargetsList.push(entryObj);
+                                            if (!meshIdxToMorphEntries.has(n.mesh)) {
+                                                meshIdxToMorphEntries.set(n.mesh, []);
+                                            }
+                                            meshIdxToMorphEntries.get(n.mesh).push(entryObj);
                                         }
                                     } catch (morphErr) {
                                         console.warn(`Morph dilewati pada ${subStep}:`, morphErr);
@@ -857,9 +1021,16 @@
                     throw new Error('Tidak ada data mesh ditemukan.');
                 }
 
-                if (hasMorphs && morphTargetsList.length > 0) {
+                // Bangun katalog lengkap MorphInstance across semua mesh + binding ekspresi VRM 0.x & 1.0
+                const exprCatalog = buildVrmExpressionCatalog(gltf, morphTargetsList, meshIdxToMorphEntries, nodeIdxToMeshIdx);
+                rootEnt._vrmVersion = exprCatalog.vrmVersion;
+                rootEnt._morphInstances = morphTargetsList.map((m) => m.morphInstance);
+                rootEnt._morphTargets = exprCatalog.flatTargets;
+                rootEnt._morphNames = exprCatalog.flatNames;
+                rootEnt._vrmExpressionBindings = exprCatalog.expressionBindings;
+                rootEnt._vrmExpressionRawMap = exprCatalog.expressionRawMap;
+                if (morphTargetsList.length > 0) {
                     rootEnt._morphInstance = morphTargetsList[0].morphInstance;
-                    rootEnt._morphNames = morphTargetsList[0].names;
                 }
 
                 stage = 'ekstrak clip animasi';
@@ -886,10 +1057,23 @@
 
                 // Inisialisasi & kunci _bindPose rig pada seluruh hierarki segera setelah model dimuat
                 let detectedBonesCount = 0;
+                let renderCompCount = 0;
                 if (typeof window.collectRigFromEntity === 'function') {
                     const rigInfo = window.collectRigFromEntity(rootEnt, true);
                     detectedBonesCount = rigInfo.bones.length;
+                    renderCompCount = rigInfo.renderComponents.length;
                 }
+
+                rootEnt._modelDiagnostics = {
+                    fileName: file.name,
+                    vrmVersion: exprCatalog.vrmVersion,
+                    skinJointSlots: totalSkinJointSlots,
+                    uniqueDeformBones: detectedBonesCount,
+                    renderComponentCount: renderCompCount,
+                    morphMeshCount: morphTargetsList.length,
+                    morphTargetTotal: exprCatalog.flatTargets.length,
+                    vrmExpressionBindings: exprCatalog.bindingCount
+                };
 
                 const cacheEntry = {
                     pos: allPositions,
@@ -912,7 +1096,8 @@
                 if (typeof window.updateTree === 'function') window.updateTree();
                 if (typeof window.saveState === 'function') window.saveState();
 
-                setGlbStatus(`✓ Model Imported: ${file.name} (Tekstur: ${loadedTexCount}, Tulang: ${detectedBonesCount})`);
+                const diagLine = `✓ ${file.name} [${exprCatalog.vrmVersion}] | Render:${renderCompCount} | Joints:${detectedBonesCount}/${totalSkinJointSlots} | Morphs:${exprCatalog.flatTargets.length} (${morphTargetsList.length} mesh) | ExprBind:${exprCatalog.bindingCount}`;
+                setGlbStatus(diagLine);
             } catch (err) {
                 const detail = (err && err.message) ? err.message : String(err);
                 const msg = `Gagal import GLB/VRM [${stage}]: ${detail}`;
