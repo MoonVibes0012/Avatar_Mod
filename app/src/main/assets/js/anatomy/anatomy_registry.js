@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/anatomy/anatomy_registry.js ===== */
-// Kamus bagian anatomi, pemetaan alias bone/node VRM, batas sudut kinematika, & pasangan simetri
+// Kamus bagian anatomi (termasuk upperChest, leftFoot, rightFoot), alias bone/node VRM, batas kinematika, & pasangan simetri
 
 (function () {
     'use strict';
