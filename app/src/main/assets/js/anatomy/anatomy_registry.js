@@ -35,8 +35,19 @@
             color: [0.35, 0.85, 1.0],
             size: 0.060,
             limits: { rx: [-40, 45], ry: [-50, 50], rz: [-40, 40] },
-            fallbackRatio: [0.0, 0.68, 0.0],
-            aliases: ['chest', 'upperchest', 'spine2', 'j_bip_c_chest', 'j_bip_c_upperchest', 'mixamorigspine1', 'mixamorigspine2', 'thorax', 'mune']
+            fallbackRatio: [0.0, 0.66, 0.0],
+            aliases: ['chest', 'spine2', 'j_bip_c_chest', 'mixamorigspine1', 'thorax', 'mune']
+        },
+        upperChest: {
+            id: 'upperChest',
+            label: 'Upper Chest / Dada Atas',
+            group: 'extended',
+            mode: 'rotate',
+            color: [0.35, 0.92, 1.0],
+            size: 0.055,
+            limits: { rx: [-35, 40], ry: [-45, 45], rz: [-35, 35] },
+            fallbackRatio: [0.0, 0.72, 0.0],
+            aliases: ['upperchest', 'j_bip_c_upperchest', 'mixamorigspine2', 'upper_chest']
         },
         neck: {
             id: 'neck',
@@ -180,6 +191,18 @@
             fallbackRatio: [0.09, 0.25, 0.0],
             aliases: ['leftlowerleg', 'lowerleg_l', 'l_lowerleg', 'calf_l', 'shin_l', 'leftleg', 'j_bip_l_lowerleg', 'mixamorigleftleg', 'sune_l']
         },
+        leftFoot: {
+            id: 'leftFoot',
+            label: 'L. Foot / Kaki Kiri',
+            group: 'extended',
+            mirror: 'rightFoot',
+            mode: 'rotate',
+            color: [1.0, 0.55, 0.45],
+            size: 0.044,
+            limits: { rx: [-60, 65], ry: [-45, 45], rz: [-45, 45] },
+            fallbackRatio: [0.09, 0.06, 0.04],
+            aliases: ['leftfoot', 'foot_l', 'l_foot', 'ankle_l', 'j_bip_l_foot', 'mixamorigleftfoot', 'ashi_l']
+        },
         rightUpperLeg: {
             id: 'rightUpperLeg',
             label: 'R. Thigh / Paha Kanan',
@@ -203,6 +226,18 @@
             limits: { rx: [-15, 145], ry: [-45, 45], rz: [-35, 35] },
             fallbackRatio: [-0.09, 0.25, 0.0],
             aliases: ['rightlowerleg', 'lowerleg_r', 'r_lowerleg', 'calf_r', 'shin_r', 'rightleg', 'j_bip_r_lowerleg', 'mixamorigrightleg', 'sune_r']
+        },
+        rightFoot: {
+            id: 'rightFoot',
+            label: 'R. Foot / Kaki Kanan',
+            group: 'extended',
+            mirror: 'leftFoot',
+            mode: 'rotate',
+            color: [1.0, 0.72, 0.42],
+            size: 0.044,
+            limits: { rx: [-60, 65], ry: [-45, 45], rz: [-45, 45] },
+            fallbackRatio: [-0.09, 0.06, 0.04],
+            aliases: ['rightfoot', 'foot_r', 'r_foot', 'ankle_r', 'j_bip_r_foot', 'mixamorigrightfoot', 'ashi_r']
         }
     };
 
