@@ -190,9 +190,64 @@
         };
     }
 
+    function captureNodeTransformRecord(b) {
+        const eul = (b && typeof b.getLocalEulerAngles === 'function')
+            ? b.getLocalEulerAngles()
+            : { x: 0, y: 0, z: 0 };
+        const quat = (b && typeof b.getLocalRotation === 'function')
+            ? b.getLocalRotation()
+            : { x: 0, y: 0, z: 0, w: 1 };
+        const pos = (b && typeof b.getLocalPosition === 'function')
+            ? b.getLocalPosition()
+            : { x: 0, y: 0, z: 0 };
+        const scl = (b && typeof b.getLocalScale === 'function')
+            ? b.getLocalScale()
+            : { x: 1, y: 1, z: 1 };
+        return {
+            name: (b && b.name) || '',
+            x: Number(eul.x) || 0,
+            y: Number(eul.y) || 0,
+            z: Number(eul.z) || 0,
+            qx: Number(quat.x) || 0,
+            qy: Number(quat.y) || 0,
+            qz: Number(quat.z) || 0,
+            qw: Number.isFinite(Number(quat.w)) ? Number(quat.w) : 1,
+            px: Number(pos.x) || 0,
+            py: Number(pos.y) || 0,
+            pz: Number(pos.z) || 0,
+            sx: Number.isFinite(Number(scl.x)) ? Number(scl.x) : 1,
+            sy: Number.isFinite(Number(scl.y)) ? Number(scl.y) : 1,
+            sz: Number.isFinite(Number(scl.z)) ? Number(scl.z) : 1
+        };
+    }
+
+    function collectHelperNodesFromHierarchy(rootEntity, deformBoneSet) {
+        const helpers = [];
+        const seen = new Set();
+        function walk(node) {
+            if (!node) return;
+            if (node !== rootEntity && !seen.has(node)) {
+                seen.add(node);
+                const name = String(node.name || '');
+                const isInternalPivot = name.indexOf('vtf_anatomy_') === 0;
+                const isMeshOnlyNode = !!(node.render && (!node.children || node.children.length === 0));
+                if (!isInternalPivot && !isMeshOnlyNode && (!deformBoneSet || !deformBoneSet.has(node))) {
+                    helpers.push(node);
+                }
+            }
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+                walk(children[i]);
+            }
+        }
+        walk(rootEntity);
+        return helpers;
+    }
+
     /**
-     * Memindai seluruh komponen render dalam hierarki entitas (termasuk root dan semua anak),
-     * mengumpulkan seluruh skinInstance serta daftar tulang unik, dan mengunci _bindPose awal.
+     * Memindai seluruh komponen render dalam hierarki entitas, memisahkan:
+     * - `bones`: joint deformasi yang dipakai oleh `skinInstance.bones`
+     * - `helperNodes`: node/helper non-deformasi dalam hierarki (misal spring/hair/accessory)
      */
     function collectRigFromEntity(entity, forceCaptureBindPose) {
         const result = {
@@ -200,7 +255,10 @@
             renderComponents: [],
             skinInstances: [],
             bones: [],
-            bindPose: []
+            helperNodes: [],
+            allNodes: [],
+            bindPose: [],
+            helperBindPose: []
         };
         if (!entity) return result;
 
@@ -239,6 +297,8 @@
             }
         }
 
+        result.helperNodes = collectHelperNodesFromHierarchy(entity, seenBones);
+        result.allNodes = result.bones.concat(result.helperNodes);
         result.hasSkinned = result.skinInstances.length > 0 && result.bones.length > 0;
 
         if (result.hasSkinned) {
@@ -247,39 +307,22 @@
                 entity._bindPose.length !== result.bones.length;
 
             if (needCapture) {
-                entity._bindPose = result.bones.map((b) => {
-                    const eul = (b && typeof b.getLocalEulerAngles === 'function')
-                        ? b.getLocalEulerAngles()
-                        : { x: 0, y: 0, z: 0 };
-                    const quat = (b && typeof b.getLocalRotation === 'function')
-                        ? b.getLocalRotation()
-                        : { x: 0, y: 0, z: 0, w: 1 };
-                    const pos = (b && typeof b.getLocalPosition === 'function')
-                        ? b.getLocalPosition()
-                        : { x: 0, y: 0, z: 0 };
-                    const scl = (b && typeof b.getLocalScale === 'function')
-                        ? b.getLocalScale()
-                        : { x: 1, y: 1, z: 1 };
-                    return {
-                        name: (b && b.name) || '',
-                        x: Number(eul.x) || 0,
-                        y: Number(eul.y) || 0,
-                        z: Number(eul.z) || 0,
-                        qx: Number(quat.x) || 0,
-                        qy: Number(quat.y) || 0,
-                        qz: Number(quat.z) || 0,
-                        qw: Number.isFinite(Number(quat.w)) ? Number(quat.w) : 1,
-                        px: Number(pos.x) || 0,
-                        py: Number(pos.y) || 0,
-                        pz: Number(pos.z) || 0,
-                        sx: Number.isFinite(Number(scl.x)) ? Number(scl.x) : 1,
-                        sy: Number.isFinite(Number(scl.y)) ? Number(scl.y) : 1,
-                        sz: Number.isFinite(Number(scl.z)) ? Number(scl.z) : 1
-                    };
-                });
+                entity._bindPose = result.bones.map(captureNodeTransformRecord);
             }
             entity._rigBones = result.bones;
             result.bindPose = entity._bindPose;
+        }
+
+        if (result.helperNodes.length > 0) {
+            const needHelperCapture = forceCaptureBindPose ||
+                !Array.isArray(entity._helperBindPose) ||
+                entity._helperBindPose.length !== result.helperNodes.length;
+
+            if (needHelperCapture) {
+                entity._helperBindPose = result.helperNodes.map(captureNodeTransformRecord);
+            }
+            entity._helperNodes = result.helperNodes;
+            result.helperBindPose = entity._helperBindPose;
         }
 
         return result;
@@ -287,7 +330,7 @@
 
     window.collectRigFromEntity = collectRigFromEntity;
     window.VtfPcCompat = {
-        version: '1.1.0',
+        version: '1.2.0',
         toFloat32Safe: toFloat32Safe,
         toUint8Safe: toUint8Safe,
         buildSafeIndexArray: buildSafeIndexArray,
