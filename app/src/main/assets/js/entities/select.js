@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/entities/select.js ===== */
-// Seleksi objek, update tree, inspector UI, mode switching, transform sync
+// Seleksi objek (resolusi otomatis ke root model hasil impor), update tree, inspector UI, mode switching, & multi-mesh morph slider
 
 (function () {
     'use strict';
@@ -19,6 +19,25 @@
         }[c]));
     }
 
+    /**
+     * Memastikan jika yang diklik/dipilih adalah node anak di dalam hierarki model hasil impor,
+     * seleksi otomatis diarahkan ke root model induknya.
+     */
+    function resolveModelRootEntity(entity) {
+        if (!entity) return null;
+        if (entity._vtfModelRoot) return entity._vtfModelRoot;
+        let cur = entity;
+        while (cur && cur.parent) {
+            if (cur._isVtfModelRoot || cur._isGLB || cur._gltfJson) return cur;
+            if (typeof window.S !== 'undefined' && window.S && Array.isArray(window.S.objects) && window.S.objects.indexOf(cur) !== -1) {
+                return cur;
+            }
+            cur = cur.parent;
+        }
+        return entity;
+    }
+    window.resolveModelRootEntity = resolveModelRootEntity;
+
     function inspectEntityRig(entity) {
         if (!entity) return { hasSkinned: false, bones: [], skinInstances: [] };
         if (typeof window.collectRigFromEntity === 'function') {
@@ -36,6 +55,22 @@
             }
         }
         return { hasSkinned: hasSkinned, bones: [], skinInstances: [] };
+    }
+
+    function getEntityMorphSlots(entity) {
+        if (!entity) return [];
+        if (Array.isArray(entity._morphSlots) && entity._morphSlots.length > 0) {
+            return entity._morphSlots;
+        }
+        if (entity._morphInstance && Array.isArray(entity._morphNames)) {
+            return entity._morphNames.map((n, idx) => ({
+                morphInstance: entity._morphInstance,
+                targetIndex: idx,
+                targetName: n,
+                displayName: n
+            }));
+        }
+        return [];
     }
 
     function resetMode() {
@@ -162,7 +197,9 @@
     }
     window.updateTree = updateTree;
 
-    function selectObject(entity) {
+    function selectObject(rawEntity) {
+        const entity = resolveModelRootEntity(rawEntity);
+
         if (S.selected !== entity && S.mode === 'bone') {
             resetMode();
         }
@@ -173,7 +210,6 @@
         updateTree();
 
         if (S.selected) {
-            // Pastikan rig & _bindPose terdeteksi segera saat entitas dipilih
             inspectEntityRig(S.selected);
             syncTransformUI(S.selected);
 
@@ -218,34 +254,40 @@
             const morphSection = document.getElementById('morphSection');
             const morphControls = document.getElementById('morphControls');
             const expressionSection = document.getElementById('expressionSection');
+            const morphSlots = getEntityMorphSlots(S.selected);
+
             if (morphSection && morphControls) {
                 morphControls.innerHTML = '';
-                if (Array.isArray(S.selected._morphNames) && S.selected._morphNames.length > 0) {
+                if (morphSlots.length > 0) {
                     morphSection.style.display = 'block';
                     if (expressionSection) expressionSection.style.display = 'block';
                     const safeEscape = typeof window.escapeHtml === 'function'
                         ? window.escapeHtml
                         : fallbackEscapeHtml;
-                    S.selected._morphNames.forEach((name, idx) => {
+
+                    morphSlots.forEach((slot, idx) => {
                         const div = document.createElement('div');
                         div.className = 'field';
-                        const rawWeight = (S.selected._morphInstance && typeof S.selected._morphInstance.getWeight === 'function')
-                            ? Number(S.selected._morphInstance.getWeight(idx))
+                        const rawWeight = (slot.morphInstance && typeof slot.morphInstance.getWeight === 'function')
+                            ? Number(slot.morphInstance.getWeight(slot.targetIndex))
                             : 0;
                         const curWeight = isFinite(rawWeight) ? Math.max(0, Math.min(1, rawWeight)) : 0;
-                        div.innerHTML = `<label>${safeEscape(name)} <span id="morphVal_${idx}">${curWeight.toFixed(2)}</span></label> <input type="range" min="0" max="1" step="0.01" value="${curWeight.toFixed(2)}" data-morph-idx="${idx}" class="morph-slider">`;
+                        const labelText = slot.displayName || slot.targetName || `Shape_${idx}`;
+                        div.innerHTML = `<label>${safeEscape(labelText)} <span id="morphVal_${idx}">${curWeight.toFixed(2)}</span></label> <input type="range" min="0" max="1" step="0.01" value="${curWeight.toFixed(2)}" data-morph-idx="${idx}" class="morph-slider">`;
                         morphControls.appendChild(div);
                     });
+
                     morphControls.querySelectorAll('input[type=range]').forEach(input => {
                         input.oninput = (e) => {
                             const val = parseFloat(e.target.value);
                             if (!isFinite(val)) return;
                             const idx = parseInt(e.target.dataset.morphIdx, 10);
-                            if (isNaN(idx)) return;
+                            if (isNaN(idx) || !morphSlots[idx]) return;
+                            const slot = morphSlots[idx];
                             const label = document.getElementById('morphVal_' + idx);
                             if (label) label.textContent = val.toFixed(2);
-                            if (S.selected && S.selected._morphInstance && typeof S.selected._morphInstance.setWeight === 'function') {
-                                S.selected._morphInstance.setWeight(idx, val);
+                            if (slot.morphInstance && typeof slot.morphInstance.setWeight === 'function') {
+                                slot.morphInstance.setWeight(slot.targetIndex, val);
                             }
                         };
                     });
