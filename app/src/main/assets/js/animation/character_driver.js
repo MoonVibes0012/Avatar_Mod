@@ -1,5 +1,6 @@
 /* ===== VTuber Forge — js/animation/character_driver.js ===== */
 // Character Driver: Animasi procedural (Auto-Blink, Breathing, Idle Sway, Head Bob, Walk Cycle)
+// Mendukung rig multi-render VRM/GLB & bind pose awal anti-drift
 
 (function () {
     'use strict';
@@ -20,9 +21,6 @@
     let isBlinking = false;
     let blinkProgress = 0;
 
-    /**
-     * Mengambil elemen DOM berdasarkan ID secara aman.
-     */
     function byId(id) {
         try {
             return document.getElementById(id);
@@ -31,9 +29,6 @@
         }
     }
 
-    /**
-     * Memperbarui teks status pada elemen #status jika tersedia.
-     */
     function setDriverStatus(msg) {
         try {
             const el = byId('status');
@@ -41,9 +36,6 @@
         } catch (e) {}
     }
 
-    /**
-     * Mencatat log debug ke overlay debug atau konsol browser.
-     */
     function logDriver(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -52,9 +44,6 @@
         }
     }
 
-    /**
-     * Mengambil instance pc.Application aktif secara aman.
-     */
     function getDriverApp() {
         if (typeof window.getPcApp === 'function') {
             try {
@@ -69,9 +58,6 @@
         return null;
     }
 
-    /**
-     * Mengambil entitas objek terpilih pada state global S secara aman.
-     */
     function getSelectedObj() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
@@ -81,25 +67,57 @@
     }
 
     /**
-     * Menandai status aktif Character Driver pada properti entitas.
+     * Mengambil rig lengkap beserta _bindPose yang sudah terkunci dari hierarki entitas.
      */
+    function getRigForDriver(entity) {
+        if (!entity) return { hasSkinned: false, bones: [], bindPose: [] };
+        if (typeof window.collectRigFromEntity === 'function') {
+            return window.collectRigFromEntity(entity, false);
+        }
+        const renders = typeof entity.findComponents === 'function'
+            ? (entity.findComponents('render') || [])
+            : (entity.render ? [entity.render] : []);
+        const seen = new Set();
+        const bones = [];
+        renders.forEach((rc) => {
+            if (!rc || !Array.isArray(rc.meshInstances)) return;
+            rc.meshInstances.forEach((mi) => {
+                if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
+                    mi.skinInstance.bones.forEach((b) => {
+                        if (b && !seen.has(b)) {
+                            seen.add(b);
+                            bones.push(b);
+                        }
+                    });
+                }
+            });
+        });
+
+        if (bones.length > 0 && (!Array.isArray(entity._bindPose) || entity._bindPose.length !== bones.length)) {
+            entity._bindPose = bones.map((b) => {
+                const r = b.getLocalEulerAngles ? b.getLocalEulerAngles() : { x: 0, y: 0, z: 0 };
+                return { x: Number(r.x) || 0, y: Number(r.y) || 0, z: Number(r.z) || 0 };
+            });
+        }
+
+        return {
+            hasSkinned: bones.length > 0,
+            bones: bones,
+            bindPose: entity._bindPose || []
+        };
+    }
+
     function setActiveDriverFlag(entity, active) {
         if (entity && typeof entity === 'object') {
             entity._driverActive = !!active;
         }
     }
 
-    /**
-     * Menyinkronkan tampilan tombol #btnCharDriver dengan status aktif driver.
-     */
     function updateDriverButtonState() {
         const btn = byId('btnCharDriver');
         if (btn) btn.classList.toggle('active', !!driverEnabled);
     }
 
-    /**
-     * Membuka atau menutup sub-panel kontrol Character Driver.
-     */
     function toggleCharDriverPanel() {
         const panel = byId('charDriverPanel');
         if (!panel) return;
@@ -107,6 +125,7 @@
         panel.style.display = isOpen ? 'none' : 'block';
         if (!isOpen) {
             const selected = getSelectedObj();
+            if (selected) getRigForDriver(selected);
             driverEnabled = true;
             setActiveDriverFlag(selected, true);
             updateDriverButtonState();
@@ -114,28 +133,23 @@
         }
     }
 
-    /**
-     * Mengaktifkan Character Driver pada model yang sedang terpilih.
-     */
     function attachDriverToSelected() {
         const selected = getSelectedObj();
         if (!selected) {
             setDriverStatus("⚠ Pilih model VRM/GLB dulu!");
             return false;
         }
+        const rig = getRigForDriver(selected);
         driverEnabled = true;
         setActiveDriverFlag(selected, true);
         updateDriverButtonState();
         const panel = byId('charDriverPanel');
         if (panel) panel.style.display = 'block';
-        setDriverStatus("🎭 Driver aktif pada: " + (selected.name || "Objek"));
+        setDriverStatus("🎭 Driver aktif pada: " + (selected.name || "Objek") + " (" + rig.bones.length + " bone)");
         logDriver("✅ Character driver attached to " + (selected.name || "Objek"));
         return true;
     }
 
-    /**
-     * Melepas Character Driver, mematikan semua toggle, dan mengembalikan pose awal.
-     */
     function detachDriver() {
         const currentSelected = getSelectedObj();
         driverEnabled = false;
@@ -164,9 +178,6 @@
         logDriver("⏹ Character driver detached");
     }
 
-    /**
-     * Mengembalikan rotasi dan skala tulang/entitas terpilih ke bind pose awal.
-     */
     function resetDriverPose() {
         const selected = getSelectedObj();
         if (!selected) return;
@@ -178,31 +189,26 @@
             if (selected._baseRot && typeof selected.setEulerAngles === 'function') {
                 selected.setEulerAngles(selected._baseRot.x, selected._baseRot.y, selected._baseRot.z);
             }
-            if (Array.isArray(selected._bindPose) && typeof selected.findComponent === 'function') {
-                const rc = selected.findComponent('render');
-                if (rc && Array.isArray(rc.meshInstances)) {
-                    for (const mi of rc.meshInstances) {
-                        if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-                            mi.skinInstance.bones.forEach((bone, idx) => {
-                                const bp = selected._bindPose[idx];
-                                if (bp && bone && typeof bone.setLocalEulerAngles === 'function') {
-                                    bone.setLocalEulerAngles(bp.x, bp.y, bp.z);
-                                }
-                            });
-                            break;
+            const rig = getRigForDriver(selected);
+            if (rig.hasSkinned && Array.isArray(rig.bindPose)) {
+                rig.bones.forEach((bone, idx) => {
+                    const bp = rig.bindPose[idx];
+                    if (bp && bone) {
+                        if (typeof bone.setLocalEulerAngles === 'function') {
+                            bone.setLocalEulerAngles(bp.x, bp.y, bp.z);
+                        }
+                        if (typeof bone.setLocalScale === 'function' && bp.sx !== undefined) {
+                            bone.setLocalScale(bp.sx, bp.sy, bp.sz);
                         }
                     }
-                }
+                });
             }
         } catch (e) {
             logDriver("Reset pose error: " + e.message);
         }
-        setDriverStatus("Pose di-reset");
+        setDriverStatus("Pose di-reset ke bind pose");
     }
 
-    /**
-     * Mencari indeks morph target kedip mata berdasarkan kata kunci standar VRM/ARKit.
-     */
     function findBlinkIndices(morphNames) {
         if (!Array.isArray(morphNames)) return [];
         const indices = [];
@@ -215,23 +221,17 @@
         return indices;
     }
 
-    /**
-     * Mencari entitas tulang berdasarkan daftar kata kunci nama tulang.
-     */
-    function findBoneByKeywords(bones, keywords) {
-        if (!Array.isArray(bones)) return null;
-        return bones.find(b => {
+    function findBoneIndexByKeywords(bones, keywords) {
+        if (!Array.isArray(bones)) return -1;
+        return bones.findIndex(b => {
             const name = ((b && b.name) || '').toLowerCase();
             return keywords.some(kw => name.includes(kw));
-        }) || null;
+        });
     }
 
-    /**
-     * Mengambil rotasi bind pose tulang tertentu dengan fallback rotasi saat ini.
-     */
-    function getBindRot(entity, boneIndex, fallbackEuler) {
-        if (entity && Array.isArray(entity._bindPose) && entity._bindPose[boneIndex]) {
-            const bp = entity._bindPose[boneIndex];
+    function getBindRot(bindPose, boneIndex, fallbackEuler) {
+        if (Array.isArray(bindPose) && bindPose[boneIndex]) {
+            const bp = bindPose[boneIndex];
             return {
                 x: Number(bp.x) || 0,
                 y: Number(bp.y) || 0,
@@ -245,9 +245,6 @@
         };
     }
 
-    /**
-     * Memperbarui seluruh efek animasi prosedural pada setiap frame render.
-     */
     function updateProceduralAnimation(dt) {
         const selected = getSelectedObj();
         if (!selected) return;
@@ -293,25 +290,24 @@
             }
         }
 
-        const renderComp = typeof selected.findComponent === 'function' ? selected.findComponent('render') : null;
-        let bones = null;
-        if (renderComp && Array.isArray(renderComp.meshInstances)) {
-            for (const mi of renderComp.meshInstances) {
-                if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-                    bones = mi.skinInstance.bones;
-                    break;
-                }
-            }
-        }
+        const rig = getRigForDriver(selected);
+        const bones = rig.hasSkinned ? rig.bones : null;
+        const bindPose = rig.bindPose;
 
         // 2. Breathing
         if (breathEnabled) {
             const phase = driverTime * breathSpeed * Math.PI * 2;
             const breathVal = Math.sin(phase) * 0.015;
             if (bones) {
-                const chestBone = findBoneByKeywords(bones, ['chest', 'spine', 'upperchest']);
+                const chestIdx = findBoneIndexByKeywords(bones, ['chest', 'spine', 'upperchest']);
+                const chestBone = chestIdx >= 0 ? bones[chestIdx] : null;
                 if (chestBone && typeof chestBone.setLocalScale === 'function') {
-                    chestBone.setLocalScale(1 + breathVal, 1 + breathVal * 0.6, 1 + breathVal);
+                    const bp = bindPose[chestIdx] || { sx: 1, sy: 1, sz: 1 };
+                    chestBone.setLocalScale(
+                        (bp.sx || 1) * (1 + breathVal),
+                        (bp.sy || 1) * (1 + breathVal * 0.6),
+                        (bp.sz || 1) * (1 + breathVal)
+                    );
                 }
             } else if (selected._baseScale && typeof selected.setLocalScale === 'function') {
                 selected.setLocalScale(
@@ -326,12 +322,10 @@
         if (swayEnabled) {
             const swayVal = Math.sin(driverTime * 1.4) * swayAmount;
             if (bones) {
-                const spineIdx = Array.isArray(bones)
-                    ? bones.findIndex(b => ['spine', 'hips', 'pelvis'].some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)))
-                    : -1;
+                const spineIdx = findBoneIndexByKeywords(bones, ['spine', 'hips', 'pelvis']);
                 const spineBone = spineIdx >= 0 ? bones[spineIdx] : null;
                 if (spineBone && typeof spineBone.setLocalEulerAngles === 'function') {
-                    const baseR = getBindRot(selected, spineIdx, spineBone.getLocalEulerAngles ? spineBone.getLocalEulerAngles() : null);
+                    const baseR = getBindRot(bindPose, spineIdx, spineBone.getLocalEulerAngles ? spineBone.getLocalEulerAngles() : null);
                     spineBone.setLocalEulerAngles(baseR.x, baseR.y, baseR.z + swayVal);
                 }
             } else if (selected._baseRot && typeof selected.setEulerAngles === 'function') {
@@ -341,38 +335,35 @@
 
         // 4. Head Bob
         if (headBobEnabled && bones) {
-            const headIdx = bones.findIndex(b => ['head', 'neck'].some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)));
+            const headIdx = findBoneIndexByKeywords(bones, ['head', 'neck']);
             const headBone = headIdx >= 0 ? bones[headIdx] : null;
             if (headBone && typeof headBone.setLocalEulerAngles === 'function') {
-                const baseR = getBindRot(selected, headIdx, headBone.getLocalEulerAngles ? headBone.getLocalEulerAngles() : null);
+                const baseR = getBindRot(bindPose, headIdx, headBone.getLocalEulerAngles ? headBone.getLocalEulerAngles() : null);
                 const bobX = Math.sin(driverTime * 2.5) * 4.0;
                 const bobY = Math.cos(driverTime * 1.7) * 3.0;
                 headBone.setLocalEulerAngles(baseR.x + bobX, baseR.y + bobY, baseR.z);
             }
         }
 
-        // 5. Walk Cycle (preview gerak tulang dasar)
+        // 5. Walk Cycle
         if (walkEnabled && bones) {
             const cycle = driverTime * walkSpeed * Math.PI * 2;
             const swing = Math.sin(cycle) * 28;
             const applyLegOrArm = (keywords, sign) => {
-                const bIdx = bones.findIndex(b => keywords.some(kw => (((b && b.name) || '').toLowerCase()).includes(kw)));
+                const bIdx = findBoneIndexByKeywords(bones, keywords);
                 const b = bIdx >= 0 ? bones[bIdx] : null;
                 if (b && typeof b.setLocalEulerAngles === 'function') {
-                    const baseR = getBindRot(selected, bIdx, b.getLocalEulerAngles ? b.getLocalEulerAngles() : null);
+                    const baseR = getBindRot(bindPose, bIdx, b.getLocalEulerAngles ? b.getLocalEulerAngles() : null);
                     b.setLocalEulerAngles(baseR.x + swing * sign, baseR.y, baseR.z);
                 }
             };
-            applyLegOrArm(['leftupleg', 'left_leg', 'leg_l', 'thigh_l'], 1);
-            applyLegOrArm(['rightupleg', 'right_leg', 'leg_r', 'thigh_r'], -1);
-            applyLegOrArm(['leftupperarm', 'left_arm', 'arm_l', 'shoulder_l'], -0.7);
-            applyLegOrArm(['rightupperarm', 'right_arm', 'arm_r', 'shoulder_r'], 0.7);
+            applyLegOrArm(['leftupleg', 'left_leg', 'leg_l', 'thigh_l', 'l_upleg'], 1);
+            applyLegOrArm(['rightupleg', 'right_leg', 'leg_r', 'thigh_r', 'r_upleg'], -1);
+            applyLegOrArm(['leftupperarm', 'left_arm', 'arm_l', 'shoulder_l', 'l_upperarm'], -0.7);
+            applyLegOrArm(['rightupperarm', 'right_arm', 'arm_r', 'shoulder_r', 'r_upperarm'], 0.7);
         }
     }
 
-    /**
-     * Menghubungkan seluruh kontrol UI Character Driver setelah panel dirender.
-     */
     function bindDriverUI() {
         try {
             const btnDriver = byId('btnCharDriver');
@@ -462,9 +453,6 @@
         }
     }
 
-    /**
-     * Mendaftarkan callback pembaruan frame pada aplikasi PlayCanvas.
-     */
     function hookDriverLoop() {
         const pcApp = getDriverApp();
         if (!pcApp || typeof pcApp.on !== 'function') return false;
