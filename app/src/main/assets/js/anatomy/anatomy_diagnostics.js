@@ -1,16 +1,38 @@
 /* ===== VTuber Forge — js/anatomy/anatomy_diagnostics.js ===== */
-// Diagnostik status pemetaan anatomi, jumlah handle kotak, fallback mode, & laporan ringkas
+// Diagnostik lengkap per model: Versi VRM, Render Components, Skin Joints, Bone Unik, Morph per Mesh, & Binding Ekspresi VRM
 
 (function () {
     'use strict';
 
+    function getSelectedEntity() {
+        if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
+        return null;
+    }
+
     function collectDiagnostics() {
+        const selEnt = getSelectedEntity();
         const rec = (window.AnatomySolver && typeof window.AnatomySolver.getRecord === 'function')
             ? window.AnatomySolver.getRecord()
             : null;
 
+        const rigDiag = (selEnt && selEnt._rigDiagnostics) ? selEnt._rigDiagnostics : null;
+        const rigLive = (selEnt && typeof window.collectRigFromEntity === 'function')
+            ? window.collectRigFromEntity(selEnt, false)
+            : null;
+
+        const morphGroups = (selEnt && Array.isArray(selEnt._morphTargetGroups))
+            ? selEnt._morphTargetGroups
+            : [];
+        const morphPerMesh = morphGroups.map(g => `${g.meshName || 'Mesh'}:${(g.names || []).length}`);
+        const totalMorphTargets = (selEnt && Array.isArray(selEnt._morphSlots))
+            ? selEnt._morphSlots.length
+            : (rigDiag ? rigDiag.totalMorphTargets : 0);
+
+        const vrmExprKeys = (selEnt && selEnt._vrmExpressions && typeof selEnt._vrmExpressions === 'object')
+            ? Object.keys(selEnt._vrmExpressions)
+            : [];
+
         const mappedIds = (rec && rec.parts) ? Object.keys(rec.parts) : [];
-        const fallbackCount = mappedIds.filter(id => !!(rec.parts[id] && rec.parts[id].isFallback)).length;
         const activeBoxes = !!(window.AnatomyAnchorBoxes && window.AnatomyAnchorBoxes.isEnabled());
         const density = (window.AnatomyAnchorBoxes && window.AnatomyAnchorBoxes.getDensityMode)
             ? window.AnatomyAnchorBoxes.getDensityMode()
@@ -23,12 +45,21 @@
             : 'rotate';
 
         return {
+            modelName: selEnt ? (selEnt.name || 'Unnamed') : 'none',
+            isRootModel: !!(selEnt && (selEnt._isVtfModelRoot || selEnt._isGLB)),
+            vrmVersion: (selEnt && selEnt._vrmVersion) || (rigDiag && rigDiag.vrmVersion) || 'N/A',
+            renderComponents: rigLive ? rigLive.renderComponents.length : (rigDiag ? rigDiag.renderComponents : 0),
+            declaredSkinJoints: rigDiag ? rigDiag.declaredSkinJoints : 0,
+            uniqueDeformBones: rigLive ? rigLive.bones.length : (rigDiag ? rigDiag.uniqueDeformBones : 0),
+            morphMeshCount: morphGroups.length,
+            morphPerMesh: morphPerMesh,
+            totalMorphTargets: totalMorphTargets,
+            vrmExpressionCount: vrmExprKeys.length,
+            vrmExpressionNames: vrmExprKeys,
             hasRecord: !!rec,
             isRigged: !!(rec && rec.isRigged),
-            mappedCount: mappedIds.length,
-            fallbackCount: fallbackCount,
+            anatomyMappedCount: mappedIds.length,
             accessoryCount: (rec && Array.isArray(rec.accessories)) ? rec.accessories.length : 0,
-            morphCount: (rec && Array.isArray(rec.morphTargets)) ? rec.morphTargets.length : 0,
             activeBoxes: activeBoxes,
             density: density,
             selectedPart: selectedPart,
@@ -39,18 +70,21 @@
 
     function formatSummary(info) {
         const d = info || collectDiagnostics();
+        const morphMeshStr = d.morphPerMesh.length > 0 ? d.morphPerMesh.join(',') : 'none';
+        const exprNamesStr = d.vrmExpressionNames.length > 0 ? d.vrmExpressionNames.join(',') : 'none';
+
         return [
-            'ANATOMY_DIAG',
-            'rec=' + (d.hasRecord ? '1' : '0'),
-            'rigged=' + (d.isRigged ? '1' : '0'),
-            'parts=' + d.mappedCount,
-            'fb=' + d.fallbackCount,
-            'acc=' + d.accessoryCount,
-            'morph=' + d.morphCount,
+            'MODEL_DIAG',
+            'model=' + d.modelName + (d.isRootModel ? '(ROOT)' : '(CHILD)'),
+            'ver=' + d.vrmVersion,
+            'renders=' + d.renderComponents,
+            'skinJoints=' + d.declaredSkinJoints,
+            'uniqueBones=' + d.uniqueDeformBones,
+            'anatomyParts=' + d.anatomyMappedCount,
+            'morphTargets=' + d.totalMorphTargets + '[' + morphMeshStr + ']',
+            'vrmExpr=' + d.vrmExpressionCount + '[' + exprNamesStr + ']',
             'boxes=' + (d.activeBoxes ? 'ON' : 'OFF') + ':' + d.density,
-            'sel=' + (d.selectedPart || 'none'),
-            'mode=' + d.dragMode,
-            'scale=' + d.modelScale
+            'selPart=' + (d.selectedPart || 'none')
         ].join(' | ');
     }
 
