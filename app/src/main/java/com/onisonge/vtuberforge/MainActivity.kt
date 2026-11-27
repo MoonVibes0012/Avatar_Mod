@@ -417,7 +417,6 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (::webView.isInitialized) {
             webView.onResume()
         }
