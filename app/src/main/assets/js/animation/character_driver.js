@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/animation/character_driver.js ===== */
-// Character Driver: Animasi procedural (Auto-Blink, Breathing, Idle Sway, Head Bob, Walk Cycle)
+// Character Driver: Animasi procedural (Auto-Blink multi-mesh/VRM, Breathing, Idle Sway, Head Bob, Walk Cycle)
 // Mendukung rig multi-render VRM/GLB & bind pose awal anti-drift
 
 (function () {
@@ -66,9 +66,6 @@
         return null;
     }
 
-    /**
-     * Mengambil rig lengkap beserta _bindPose yang sudah terkunci dari hierarki entitas.
-     */
     function getRigForDriver(entity) {
         if (!entity) return { hasSkinned: false, bones: [], bindPose: [] };
         if (typeof window.collectRigFromEntity === 'function') {
@@ -209,16 +206,62 @@
         setDriverStatus("Pose di-reset ke bind pose");
     }
 
-    function findBlinkIndices(morphNames) {
-        if (!Array.isArray(morphNames)) return [];
-        const indices = [];
-        morphNames.forEach((n, idx) => {
-            const lower = String(n || '').toLowerCase();
-            if (lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose')) {
-                indices.push(idx);
+    /**
+     * Menerapkan bobot kedip (0..1) menggunakan binding ekspresi VRM (blink/blinkLeft/blinkRight)
+     * atau fallback seluruh slot morph target lintas mesh yang mengandung kata kunci blink.
+     */
+    function applyBlinkWeightToModel(entity, weight) {
+        if (!entity) return;
+        const w = Math.max(0, Math.min(1, Number(weight) || 0));
+        const vrmExpr = (entity._vrmExpressions && typeof entity._vrmExpressions === 'object')
+            ? entity._vrmExpressions
+            : {};
+
+        let applied = false;
+        const blinkKeys = ['blink', 'blinkLeft', 'blinkRight'];
+        for (let k = 0; k < blinkKeys.length; k++) {
+            const def = vrmExpr[blinkKeys[k]];
+            if (def && Array.isArray(def.binds) && def.binds.length > 0) {
+                def.binds.forEach((b) => {
+                    try {
+                        if (b.morphInstance && typeof b.morphInstance.setWeight === 'function') {
+                            const maxW = b.weight !== undefined ? b.weight : 1.0;
+                            b.morphInstance.setWeight(b.targetIndex, w * maxW);
+                            applied = true;
+                        }
+                    } catch (e) {}
+                });
+            }
+        }
+
+        const slots = Array.isArray(entity._morphSlots)
+            ? entity._morphSlots
+            : (entity._morphInstance && Array.isArray(entity._morphNames)
+                ? entity._morphNames.map((n, idx) => ({ morphInstance: entity._morphInstance, targetIndex: idx, targetName: n }))
+                : []);
+
+        slots.forEach((slot, sIdx) => {
+            const lower = String(slot.targetName || '').toLowerCase();
+            const isBlinkName = lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose');
+            if (!applied && isBlinkName && slot.morphInstance && typeof slot.morphInstance.setWeight === 'function') {
+                try {
+                    slot.morphInstance.setWeight(slot.targetIndex, w);
+                } catch (e) {}
+            }
+            if (isBlinkName || applied) {
+                try {
+                    const curW = (slot.morphInstance && typeof slot.morphInstance.getWeight === 'function')
+                        ? Number(slot.morphInstance.getWeight(slot.targetIndex))
+                        : 0;
+                    if (isFinite(curW)) {
+                        const slider = document.querySelector('#morphControls input[data-morph-idx="' + sIdx + '"]');
+                        if (slider) slider.value = curW.toFixed(2);
+                        const label = byId('morphVal_' + sIdx);
+                        if (label) label.textContent = curW.toFixed(2);
+                    }
+                } catch (e) {}
             }
         });
-        return indices;
     }
 
     function findBoneIndexByKeywords(bones, keywords) {
@@ -254,8 +297,8 @@
         const safeDt = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? Math.min(dt, 0.1) : 0.016;
         driverTime += safeDt;
 
-        // 1. Auto-Blink
-        if (blinkEnabled && selected._morphInstance && Array.isArray(selected._morphNames)) {
+        // 1. Auto-Blink (Multi-Mesh & VRM Expression Binding)
+        if (blinkEnabled) {
             if (!isBlinking) {
                 nextBlinkTime -= safeDt;
                 if (nextBlinkTime <= 0) {
@@ -274,19 +317,7 @@
                     isBlinking = false;
                     weight = 0;
                 }
-
-                const blinkIndices = findBlinkIndices(selected._morphNames);
-                blinkIndices.forEach(idx => {
-                    try {
-                        if (typeof selected._morphInstance.setWeight === 'function') {
-                            selected._morphInstance.setWeight(idx, weight);
-                        }
-                        const slider = document.querySelector('#morphControls input[data-morph-idx="' + idx + '"]');
-                        if (slider) slider.value = weight.toFixed(2);
-                        const label = byId('morphVal_' + idx);
-                        if (label) label.textContent = weight.toFixed(2);
-                    } catch (e) {}
-                });
+                applyBlinkWeightToModel(selected, weight);
             }
         }
 
