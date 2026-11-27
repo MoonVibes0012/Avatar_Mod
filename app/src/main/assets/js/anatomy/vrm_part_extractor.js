@@ -1,10 +1,33 @@
 /* ===== VTuber Forge — js/anatomy/vrm_part_extractor.js ===== */
-// Ekstraksi & pemisahan bagian model VRM/GLB, pencatatan Rest Pose awal, serta pembersihan pivot aman
+// Ekstraksi & pemisahan bagian model VRM/GLB (Prioritas Metadata VRM 0.x & VRM 1.0 + Pencocokan Nama)
 
 (function () {
     'use strict';
 
     const extractedCache = new WeakMap();
+
+    const VRM_TO_ANATOMY_PART = {
+        hips: 'hips',
+        spine: 'spine',
+        chest: 'chest',
+        upperchest: 'upperChest',
+        neck: 'neck',
+        head: 'head',
+        leftshoulder: 'leftShoulder',
+        leftupperarm: 'leftUpperArm',
+        leftlowerarm: 'leftLowerArm',
+        lefthand: 'leftHand',
+        rightshoulder: 'rightShoulder',
+        rightupperarm: 'rightUpperArm',
+        rightlowerarm: 'rightLowerArm',
+        righthand: 'rightHand',
+        leftupperleg: 'leftUpperLeg',
+        leftlowerleg: 'leftLowerLeg',
+        leftfoot: 'leftFoot',
+        rightupperleg: 'rightUpperLeg',
+        rightlowerleg: 'rightLowerLeg',
+        rightfoot: 'rightFoot'
+    };
 
     function logExtractor(msg) {
         if (typeof window.dbg === 'function') {
@@ -76,29 +99,60 @@
         }
     }
 
-    function cleanupFallbackPivots(record) {
-        if (!record || !Array.isArray(record.fallbackPivots)) return;
-        for (let i = 0; i < record.fallbackPivots.length; i++) {
-            const p = record.fallbackPivots[i];
-            try {
-                if (p && p.parent) p.parent.removeChild(p);
-                if (p && typeof p.destroy === 'function') p.destroy();
-            } catch (e) {}
+    function extractVrmHumanoidMetadata(rootEntity) {
+        const map = new Map();
+        if (!rootEntity || !rootEntity._gltfJson || !Array.isArray(rootEntity._nodeEntities)) {
+            return map;
         }
-        record.fallbackPivots.length = 0;
-    }
+        const gltf = rootEntity._gltfJson;
+        const nodeEntities = rootEntity._nodeEntities;
 
-    function setLocalPositionRelativeToRoot(pivot, rootEntity, wx, wy, wz) {
-        if (!pivot) return;
-        if (rootEntity && typeof rootEntity.getWorldTransform === 'function') {
-            try {
-                const invWorld = rootEntity.getWorldTransform().clone().invert();
-                const localPos = invWorld.transformPoint(new pc.Vec3(wx, wy, wz));
-                pivot.setLocalPosition(localPos.x, localPos.y, localPos.z);
-                return;
-            } catch (e) {}
+        // 1. VRM 0.x: gltf.extensions.VRM.humanoid.humanBones[] -> { bone: 'head', node: 12 }
+        const vrm0Bones = gltf.extensions &&
+            gltf.extensions.VRM &&
+            gltf.extensions.VRM.humanoid &&
+            Array.isArray(gltf.extensions.VRM.humanoid.humanBones)
+            ? gltf.extensions.VRM.humanoid.humanBones
+            : null;
+
+        if (vrm0Bones) {
+            for (let i = 0; i < vrm0Bones.length; i++) {
+                const entry = vrm0Bones[i];
+                if (!entry || entry.node === undefined || !entry.bone) continue;
+                const key = String(entry.bone).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const partId = VRM_TO_ANATOMY_PART[key];
+                const nodeEnt = nodeEntities[entry.node];
+                if (partId && nodeEnt && !map.has(partId)) {
+                    map.set(partId, nodeEnt);
+                }
+            }
         }
-        pivot.setPosition(wx, wy, wz);
+
+        // 2. VRM 1.0: gltf.extensions.VRMC_vrm.humanoid.humanBones -> { head: { node: 12 }, ... }
+        const vrm1Bones = gltf.extensions &&
+            gltf.extensions.VRMC_vrm &&
+            gltf.extensions.VRMC_vrm.humanoid &&
+            gltf.extensions.VRMC_vrm.humanoid.humanBones &&
+            typeof gltf.extensions.VRMC_vrm.humanoid.humanBones === 'object'
+            ? gltf.extensions.VRMC_vrm.humanoid.humanBones
+            : null;
+
+        if (vrm1Bones) {
+            const keys = Object.keys(vrm1Bones);
+            for (let i = 0; i < keys.length; i++) {
+                const rawName = keys[i];
+                const spec = vrm1Bones[rawName];
+                if (!spec || spec.node === undefined) continue;
+                const key = String(rawName).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const partId = VRM_TO_ANATOMY_PART[key];
+                const nodeEnt = nodeEntities[spec.node];
+                if (partId && nodeEnt && !map.has(partId)) {
+                    map.set(partId, nodeEnt);
+                }
+            }
+        }
+
+        return map;
     }
 
     function extractModelAnatomy(rootEntity, forceRefresh) {
@@ -109,23 +163,26 @@
             if (cached && cached.root === rootEntity) return cached;
         }
 
-        const old = extractedCache.get(rootEntity);
-        if (old) cleanupFallbackPivots(old);
-
         const parts = {};
         const accessories = [];
         const morphTargets = [];
-        const fallbackPivots = [];
         const boneSet = new Set();
 
+        if (typeof window.collectRigFromEntity === 'function') {
+            const rig = window.collectRigFromEntity(rootEntity, false);
+            if (rig && Array.isArray(rig.bones)) {
+                rig.bones.forEach((b) => { if (b) boneSet.add(b); });
+            }
+        }
+
         if (typeof rootEntity.findComponents === 'function') {
-            const renders = rootEntity.findComponents('render');
+            const renders = rootEntity.findComponents('render') || [];
             for (let i = 0; i < renders.length; i++) {
                 const mis = renders[i].meshInstances || [];
                 for (let j = 0; j < mis.length; j++) {
                     const mi = mis[j];
                     if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-                        mi.skinInstance.bones.forEach(b => { if (b) boneSet.add(b); });
+                        mi.skinInstance.bones.forEach((b) => { if (b) boneSet.add(b); });
                     }
                     if (mi && mi.morphInstance) {
                         morphTargets.push(mi);
@@ -134,6 +191,22 @@
             }
         }
 
+        // Prioritas 1: Metadata Humanoid VRM 0.x / VRM 1.0
+        const vrmMetaMap = extractVrmHumanoidMetadata(rootEntity);
+        vrmMetaMap.forEach((node, partId) => {
+            parts[partId] = {
+                partId: partId,
+                entity: node,
+                isBone: boneSet.has(node),
+                isFallback: false,
+                source: 'vrm_metadata',
+                rest: captureRestTransform(node),
+                offsetEuler: new pc.Vec3(0, 0, 0),
+                offsetPos: new pc.Vec3(0, 0, 0)
+            };
+        });
+
+        // Prioritas 2: Fallback pencocokan nama tulang/node di hierarki
         traverseHierarchy(rootEntity, function (node) {
             if (node === rootEntity) return;
             if (typeof node.name === 'string' && node.name.indexOf('vtf_anatomy_pivot_') === 0) return;
@@ -143,12 +216,13 @@
             const isBone = boneSet.has(node);
 
             if (partId) {
-                if (!parts[partId] || (!parts[partId].isBone && isBone)) {
+                if (!parts[partId] || (!parts[partId].isBone && isBone && parts[partId].source !== 'vrm_metadata')) {
                     parts[partId] = {
                         partId: partId,
                         entity: node,
                         isBone: isBone,
                         isFallback: false,
+                        source: 'name_match',
                         rest: captureRestTransform(node),
                         offsetEuler: new pc.Vec3(0, 0, 0),
                         offsetPos: new pc.Vec3(0, 0, 0)
@@ -168,54 +242,28 @@
         });
 
         const mappedCount = Object.keys(parts).length;
+        const hasValidRig = boneSet.size > 0 && mappedCount > 0;
         const bounds = computeEntityBounds(rootEntity);
         const height = Math.max(0.25, bounds.size.y);
-        const width = Math.max(0.25, Math.max(bounds.size.x, height * 0.45));
-
-        if (mappedCount < 4) {
-            const allIds = window.AnatomyRegistry.PART_ORDER;
-            for (let i = 0; i < allIds.length; i++) {
-                const partId = allIds[i];
-                if (parts[partId]) continue;
-                const def = window.AnatomyRegistry.getPartDef(partId);
-                if (!def || !def.fallbackRatio) continue;
-
-                const pivot = new pc.Entity('vtf_anatomy_pivot_' + partId);
-                const wx = bounds.center.x + (def.fallbackRatio[0] * width);
-                const wy = bounds.min.y + (def.fallbackRatio[1] * height);
-                const wz = bounds.center.z + (def.fallbackRatio[2] * width);
-
-                rootEntity.addChild(pivot);
-                setLocalPositionRelativeToRoot(pivot, rootEntity, wx, wy, wz);
-                fallbackPivots.push(pivot);
-
-                parts[partId] = {
-                    partId: partId,
-                    entity: pivot,
-                    targetEntity: rootEntity,
-                    isBone: false,
-                    isFallback: true,
-                    rest: captureRestTransform(pivot),
-                    rootRest: captureRestTransform(rootEntity),
-                    offsetEuler: new pc.Vec3(0, 0, 0),
-                    offsetPos: new pc.Vec3(0, 0, 0)
-                };
-            }
-        }
 
         const record = {
             root: rootEntity,
             parts: parts,
             accessories: accessories,
             morphTargets: morphTargets,
-            fallbackPivots: fallbackPivots,
-            isRigged: boneSet.size > 0,
+            fallbackPivots: [],
+            isRigged: hasValidRig,
+            mappedCount: mappedCount,
+            totalBones: boneSet.size,
             bounds: bounds,
-            modelScale: Math.max(0.2, height)
+            modelScale: Math.max(0.2, height),
+            unavailableReason: hasValidRig
+                ? ''
+                : 'Pose tulang tidak tersedia: model tidak memiliki rig humanoid atau tulang yang dapat dipetakan.'
         };
 
         extractedCache.set(rootEntity, record);
-        logExtractor('🦴 Anatomy extracted: parts=' + Object.keys(parts).length + ' rigged=' + record.isRigged + ' acc=' + accessories.length);
+        logExtractor('🦴 Anatomy extracted: parts=' + mappedCount + ' bones=' + boneSet.size + ' rigged=' + hasValidRig);
         return record;
     }
 
@@ -225,9 +273,6 @@
         p.offsetEuler.set(0, 0, 0);
         p.offsetPos.set(0, 0, 0);
         restoreRestTransform(p.entity, p.rest);
-        if (p.isFallback && p.targetEntity && p.rootRest) {
-            restoreRestTransform(p.targetEntity, p.rootRest);
-        }
     }
 
     function resetAllPoses(record) {
@@ -240,8 +285,6 @@
 
     function disposeRecordForEntity(rootEntity) {
         if (!rootEntity || !extractedCache.has(rootEntity)) return;
-        const rec = extractedCache.get(rootEntity);
-        cleanupFallbackPivots(rec);
         extractedCache.delete(rootEntity);
     }
 
