@@ -1,5 +1,6 @@
 /* ===== VTuber Forge — js/anatomy/anatomy_solver.js ===== */
 // Kalkulasi gerakan anatomi dari seretan bola penanda, batas kinematika, simetri, & damping ringan
+// Hanya menggerakkan tulang nyata (tidak memutar root model palsu bila rig tidak terpetakan)
 
 (function () {
     'use strict';
@@ -11,6 +12,13 @@
     let pendingTargetEuler = null;
     let pendingTargetPos = null;
     let frameTimer = null;
+
+    function setSolverStatus(msg) {
+        try {
+            const el = document.getElementById('status');
+            if (el) el.textContent = msg;
+        } catch (e) {}
+    }
 
     function isFaceTrackingActive() {
         if (window.__vtfFaceTrackingActive || window.faceTrackingRunning) return true;
@@ -35,10 +43,25 @@
         if (window.AnatomySelectionSphere) {
             window.AnatomySelectionSphere.clearSelection();
         }
+        if (currentRecord && !currentRecord.isRigged) {
+            setSolverStatus('⚠ ' + (currentRecord.unavailableReason || 'Pose tulang tidak tersedia pada model ini.'));
+        }
     }
 
     function selectPart(partId) {
-        if (!currentRecord || !currentRecord.parts || !currentRecord.parts[partId]) {
+        if (!currentRecord || !currentRecord.isRigged) {
+            selectedPartId = null;
+            pendingTargetEuler = null;
+            pendingTargetPos = null;
+            if (window.AnatomySelectionSphere) {
+                window.AnatomySelectionSphere.clearSelection();
+            }
+            if (currentRecord && currentRecord.unavailableReason) {
+                setSolverStatus('⚠ ' + currentRecord.unavailableReason);
+            }
+            return;
+        }
+        if (!currentRecord.parts || !currentRecord.parts[partId]) {
             selectedPartId = null;
             pendingTargetEuler = null;
             pendingTargetPos = null;
@@ -65,7 +88,7 @@
     }
 
     function applyPoseToPartEntry(partId, partEntry) {
-        if (!partEntry || !partEntry.entity || !partEntry.rest) return;
+        if (!partEntry || !partEntry.entity || !partEntry.rest || partEntry.isFallback) return;
         const def = window.AnatomyRegistry ? window.AnatomyRegistry.getPartDef(partId) : null;
 
         if (window.AnatomyRegistry) {
@@ -79,24 +102,6 @@
 
         const r = partEntry.rest;
         const rotScale = (isFaceTrackingActive() && (partId === 'head' || partId === 'neck')) ? 0.5 : 1.0;
-
-        if (partEntry.isFallback && partEntry.targetEntity && partEntry.rootRest) {
-            if (typeof partEntry.targetEntity.setLocalEulerAngles === 'function') {
-                partEntry.targetEntity.setLocalEulerAngles(
-                    r.rot[0] + partEntry.offsetEuler.x * 0.45 * rotScale,
-                    r.rot[1] + partEntry.offsetEuler.y * 0.45 * rotScale,
-                    r.rot[2] + partEntry.offsetEuler.z * 0.45 * rotScale
-                );
-            }
-            if (typeof partEntry.entity.setLocalPosition === 'function') {
-                partEntry.entity.setLocalPosition(
-                    r.pos[0] + partEntry.offsetPos.x,
-                    r.pos[1] + partEntry.offsetPos.y,
-                    r.pos[2] + partEntry.offsetPos.z
-                );
-            }
-            return;
-        }
 
         if (typeof partEntry.entity.setLocalEulerAngles === 'function') {
             partEntry.entity.setLocalEulerAngles(
@@ -120,7 +125,7 @@
         const def = window.AnatomyRegistry.getPartDef(partId);
         if (!def || !def.mirror) return;
         const mirrorEntry = currentRecord.parts[def.mirror];
-        if (!mirrorEntry) return;
+        if (!mirrorEntry || mirrorEntry.isFallback) return;
 
         mirrorEntry.offsetEuler.set(
             sourceEntry.offsetEuler.x,
@@ -136,7 +141,7 @@
     }
 
     function stepSmoothing() {
-        if (!currentRecord || !selectedPartId || !currentRecord.parts || !currentRecord.parts[selectedPartId]) {
+        if (!currentRecord || !currentRecord.isRigged || !selectedPartId || !currentRecord.parts || !currentRecord.parts[selectedPartId]) {
             frameTimer = null;
             return;
         }
@@ -187,7 +192,13 @@
     }
 
     function handleDragMove(partId, mode, dx, dy, camEntity) {
-        if (!currentRecord || !currentRecord.parts || !currentRecord.parts[partId]) return;
+        if (!currentRecord || !currentRecord.isRigged) {
+            if (currentRecord && currentRecord.unavailableReason) {
+                setSolverStatus('⚠ ' + currentRecord.unavailableReason);
+            }
+            return;
+        }
+        if (!currentRecord.parts || !currentRecord.parts[partId]) return;
         if (selectedPartId !== partId) selectPart(partId);
 
         const entry = currentRecord.parts[partId];
@@ -269,6 +280,7 @@
         for (let i = 0; i < ids.length; i++) {
             const id = ids[i];
             const p = currentRecord.parts[id];
+            if (!p || p.isFallback) continue;
             snap[id] = {
                 rx: Number(p.offsetEuler.x.toFixed(3)),
                 ry: Number(p.offsetEuler.y.toFixed(3)),
@@ -282,13 +294,13 @@
     }
 
     function importPoseSnapshot(snap) {
-        if (!currentRecord || !currentRecord.parts || !snap || typeof snap !== 'object') return;
+        if (!currentRecord || !currentRecord.isRigged || !currentRecord.parts || !snap || typeof snap !== 'object') return;
         const ids = Object.keys(snap);
         for (let i = 0; i < ids.length; i++) {
             const id = ids[i];
             const p = currentRecord.parts[id];
             const item = snap[id];
-            if (!p || !item) continue;
+            if (!p || !item || p.isFallback) continue;
             p.offsetEuler.set(Number(item.rx) || 0, Number(item.ry) || 0, Number(item.rz) || 0);
             p.offsetPos.set(Number(item.px) || 0, Number(item.py) || 0, Number(item.pz) || 0);
             applyPoseToPartEntry(id, p);
