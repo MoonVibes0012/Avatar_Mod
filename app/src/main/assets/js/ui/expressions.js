@@ -1,16 +1,16 @@
 /* ===== VTuber Forge — js/ui/expressions.js ===== */
-// Blendshape / Facial Expressions Preset & Custom Expressions
+// Blendshape / Facial Expressions Preset & Custom Expressions (Mendukung Multi-Mesh MorphInstance & Metadata VRM 0.x / 1.0)
 
 (function () {
     'use strict';
 
     const EXPRESSION_PRESETS = {
-        neutral: { label: '😐 Neutral', keywords: [] },
-        happy:   { label: '😊 Happy',   keywords: ['joy', 'happy', 'smile', 'fun'] },
-        angry:   { label: '😠 Angry',   keywords: ['angry', 'anger', 'frown'] },
-        sad:     { label: '😢 Sad',     keywords: ['sad', 'sorrow'] },
-        surprised:{ label: '😮 Surprised', keywords: ['surprised', 'surprise', 'oh', 'o'] },
-        blink:   { label: '😉 Blink',   keywords: ['blink', 'blink_l', 'blink_r', 'eye_close'] }
+        neutral:   { label: '😐 Neutral',   vrmKeys: ['neutral'], keywords: [] },
+        happy:     { label: '😊 Happy',     vrmKeys: ['happy', 'joy', 'fun', 'smile'], keywords: ['joy', 'happy', 'smile', 'fun'] },
+        angry:     { label: '😠 Angry',     vrmKeys: ['angry', 'anger'], keywords: ['angry', 'anger', 'frown'] },
+        sad:       { label: '😢 Sad',       vrmKeys: ['sad', 'sorrow'], keywords: ['sad', 'sorrow'] },
+        surprised: { label: '😮 Surprised', vrmKeys: ['surprised', 'surprise', 'oh'], keywords: ['surprised', 'surprise', 'oh'] },
+        blink:     { label: '😉 Blink',     vrmKeys: ['blink', 'blinkLeft', 'blinkRight'], keywords: ['blink', 'eye_close', 'eyeclose'] }
     };
 
     let customExpressions = {};
@@ -45,6 +45,22 @@
         return null;
     }
 
+    function getModelMorphSlots(entity) {
+        if (!entity) return [];
+        if (Array.isArray(entity._morphSlots) && entity._morphSlots.length > 0) {
+            return entity._morphSlots;
+        }
+        if (entity._morphInstance && Array.isArray(entity._morphNames)) {
+            return entity._morphNames.map((n, idx) => ({
+                morphInstance: entity._morphInstance,
+                targetIndex: idx,
+                targetName: n,
+                displayName: n
+            }));
+        }
+        return [];
+    }
+
     function updateExprButtonState(presetKey) {
         activePresetKey = presetKey || null;
         document.querySelectorAll('.expr-btn[data-expr]').forEach(btn => {
@@ -54,22 +70,34 @@
     }
     window.updateExprButtonState = updateExprButtonState;
 
-    function syncMorphSliderUI(idx, weight) {
+    function syncMorphSliderUI(slotIdx, weight) {
         const clamped = Math.max(0, Math.min(1, Number(weight) || 0));
-        const slider = document.querySelector('#morphControls input[data-morph-idx="' + idx + '"]');
+        const slider = document.querySelector('#morphControls input[data-morph-idx="' + slotIdx + '"]');
         if (slider) slider.value = clamped.toFixed(2);
-        const label = byId('morphVal_' + idx);
+        const label = byId('morphVal_' + slotIdx);
         if (label) label.textContent = clamped.toFixed(2);
     }
 
-    function resetAllMorphWeights(entity) {
-        if (!entity || !entity._morphInstance || !Array.isArray(entity._morphNames)) return;
-        entity._morphNames.forEach((_, idx) => {
+    function syncAllSlidersFromInstances(entity) {
+        const slots = getModelMorphSlots(entity);
+        slots.forEach((slot, sIdx) => {
             try {
-                if (typeof entity._morphInstance.setWeight === 'function') {
-                    entity._morphInstance.setWeight(idx, 0);
+                const w = (slot.morphInstance && typeof slot.morphInstance.getWeight === 'function')
+                    ? Number(slot.morphInstance.getWeight(slot.targetIndex))
+                    : 0;
+                syncMorphSliderUI(sIdx, isFinite(w) ? w : 0);
+            } catch (e) {}
+        });
+    }
+
+    function resetAllMorphWeights(entity) {
+        const slots = getModelMorphSlots(entity);
+        slots.forEach((slot, sIdx) => {
+            try {
+                if (slot.morphInstance && typeof slot.morphInstance.setWeight === 'function') {
+                    slot.morphInstance.setWeight(slot.targetIndex, 0);
                 }
-                syncMorphSliderUI(idx, 0);
+                syncMorphSliderUI(sIdx, 0);
             } catch (e) {}
         });
     }
@@ -80,8 +108,14 @@
             setExprStatus("⚠ Pilih model dulu sebelum menerapkan ekspresi!");
             return;
         }
-        if (!selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
-            setExprStatus("⚠ Model ini tidak memiliki blendshape / morph targets.");
+
+        const slots = getModelMorphSlots(selected);
+        const vrmExprMap = (selected._vrmExpressions && typeof selected._vrmExpressions === 'object')
+            ? selected._vrmExpressions
+            : {};
+
+        if (slots.length === 0 && Object.keys(vrmExprMap).length === 0) {
+            setExprStatus("⚠ Model ini tidak memiliki blendshape / ekspresi VRM.");
             return;
         }
 
@@ -90,32 +124,63 @@
 
         resetAllMorphWeights(selected);
 
-        if (presetKey === 'neutral' || !Array.isArray(preset.keywords) || preset.keywords.length === 0) {
+        if (presetKey === 'neutral') {
+            if (vrmExprMap.neutral && Array.isArray(vrmExprMap.neutral.binds)) {
+                vrmExprMap.neutral.binds.forEach((b) => {
+                    try {
+                        if (b.morphInstance && typeof b.morphInstance.setWeight === 'function') {
+                            b.morphInstance.setWeight(b.targetIndex, b.weight !== undefined ? b.weight : 1.0);
+                        }
+                    } catch (e) {}
+                });
+                syncAllSlidersFromInstances(selected);
+            }
             updateExprButtonState('neutral');
             setExprStatus("Ekspresi: Neutral");
             return;
         }
 
         let matchedCount = 0;
-        selected._morphNames.forEach((rawName, idx) => {
-            const lower = String(rawName || '').toLowerCase();
-            const isMatch = preset.keywords.some(kw => lower.includes(kw));
-            if (isMatch) {
-                matchedCount++;
-                try {
-                    if (typeof selected._morphInstance.setWeight === 'function') {
-                        selected._morphInstance.setWeight(idx, 1.0);
-                    }
-                    syncMorphSliderUI(idx, 1.0);
-                } catch (e) {}
-            }
-        });
 
+        // Prioritas 1: Binding metadata ekspresi VRM 0.x (blendShapeMaster) / VRM 1.0 (expressions)
+        const vrmKeys = Array.isArray(preset.vrmKeys) ? preset.vrmKeys : [presetKey];
+        for (let k = 0; k < vrmKeys.length; k++) {
+            const vk = vrmKeys[k];
+            const exprDef = vrmExprMap[vk];
+            if (exprDef && Array.isArray(exprDef.binds) && exprDef.binds.length > 0) {
+                exprDef.binds.forEach((b) => {
+                    try {
+                        if (b.morphInstance && typeof b.morphInstance.setWeight === 'function') {
+                            b.morphInstance.setWeight(b.targetIndex, b.weight !== undefined ? b.weight : 1.0);
+                            matchedCount++;
+                        }
+                    } catch (e) {}
+                });
+            }
+        }
+
+        // Prioritas 2: Fallback pencocokan nama target di seluruh mesh jika metadata VRM tidak tersedia
+        if (matchedCount === 0 && Array.isArray(preset.keywords) && preset.keywords.length > 0) {
+            slots.forEach((slot) => {
+                const lower = String(slot.targetName || '').toLowerCase();
+                if (lower.startsWith('shape_')) return;
+                const isMatch = preset.keywords.some(kw => lower.includes(kw));
+                if (isMatch && slot.morphInstance && typeof slot.morphInstance.setWeight === 'function') {
+                    try {
+                        slot.morphInstance.setWeight(slot.targetIndex, 1.0);
+                        matchedCount++;
+                    } catch (e) {}
+                }
+            });
+        }
+
+        syncAllSlidersFromInstances(selected);
         updateExprButtonState(presetKey);
+
         if (matchedCount > 0) {
-            setExprStatus("Ekspresi " + preset.label + " diterapkan (" + matchedCount + " morph)");
+            setExprStatus("Ekspresi " + preset.label + " diterapkan (" + matchedCount + " binding)");
         } else {
-            setExprStatus("Morph untuk '" + presetKey + "' tidak ditemukan pada model ini.");
+            setExprStatus("Ekspresi '" + presetKey + "' tidak terpetakan pada model ini.");
         }
     }
 
@@ -144,14 +209,17 @@
                 const name = btn.getAttribute('data-custom-expr');
                 const weights = customExpressions[name];
                 const selected = getSelectedModel();
-                if (!selected || !selected._morphInstance || !Array.isArray(weights)) return;
+                const slots = getModelMorphSlots(selected);
+                if (!selected || slots.length === 0 || !Array.isArray(weights)) return;
 
                 resetAllMorphWeights(selected);
                 weights.forEach((w, idx) => {
+                    const slot = slots[idx];
+                    if (!slot || !slot.morphInstance) return;
                     const num = Math.max(0, Math.min(1, Number(w) || 0));
                     try {
-                        if (typeof selected._morphInstance.setWeight === 'function') {
-                            selected._morphInstance.setWeight(idx, num);
+                        if (typeof slot.morphInstance.setWeight === 'function') {
+                            slot.morphInstance.setWeight(slot.targetIndex, num);
                         }
                         syncMorphSliderUI(idx, num);
                     } catch (e) {}
@@ -164,7 +232,8 @@
 
     function saveCustomExpression() {
         const selected = getSelectedModel();
-        if (!selected || !selected._morphInstance || !Array.isArray(selected._morphNames) || selected._morphNames.length === 0) {
+        const slots = getModelMorphSlots(selected);
+        if (!selected || slots.length === 0) {
             setExprStatus("⚠ Pilih model yang memiliki morph targets dulu!");
             return;
         }
@@ -176,10 +245,10 @@
             return;
         }
 
-        const weights = selected._morphNames.map((_, idx) => {
+        const weights = slots.map((slot) => {
             try {
-                if (typeof selected._morphInstance.getWeight === 'function') {
-                    const val = Number(selected._morphInstance.getWeight(idx));
+                if (slot.morphInstance && typeof slot.morphInstance.getWeight === 'function') {
+                    const val = Number(slot.morphInstance.getWeight(slot.targetIndex));
                     return isFinite(val) ? Math.max(0, Math.min(1, val)) : 0;
                 }
             } catch (e) {}
