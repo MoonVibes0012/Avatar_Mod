@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/editing/bone.js ===== */
-// Mode editing bone hierarchy & re-binding tombol reset bone
+// Mode editing bone hierarchy (mendukung multi-render VRM/GLB & bind pose awal)
 
 (function () {
     'use strict';
@@ -26,19 +26,47 @@
     }
 
     /**
-     * Mengambil skinInstance pertama dari komponen render objek terpilih.
+     * Mengumpulkan seluruh rig (bones & bindPose) dari hierarki objek terpilih.
      */
-    function getSelectedSkinInstance() {
+    function getSelectedRigData() {
         const st = getBoneState();
-        if (!st || !st.selected || typeof st.selected.findComponent !== 'function') return null;
-        const renderComp = st.selected.findComponent('render');
-        if (!renderComp || !renderComp.meshInstances || renderComp.meshInstances.length === 0) return null;
-        for (const mi of renderComp.meshInstances) {
-            if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
-                return mi.skinInstance;
-            }
+        if (!st || !st.selected) return { hasSkinned: false, bones: [], bindPose: [] };
+
+        if (typeof window.collectRigFromEntity === 'function') {
+            return window.collectRigFromEntity(st.selected, false);
         }
-        return null;
+
+        const renders = typeof st.selected.findComponents === 'function'
+            ? (st.selected.findComponents('render') || [])
+            : (st.selected.render ? [st.selected.render] : []);
+        const seen = new Set();
+        const bones = [];
+        renders.forEach((rc) => {
+            if (!rc || !Array.isArray(rc.meshInstances)) return;
+            rc.meshInstances.forEach((mi) => {
+                if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
+                    mi.skinInstance.bones.forEach((b) => {
+                        if (b && !seen.has(b)) {
+                            seen.add(b);
+                            bones.push(b);
+                        }
+                    });
+                }
+            });
+        });
+
+        if (bones.length > 0 && (!Array.isArray(st.selected._bindPose) || st.selected._bindPose.length !== bones.length)) {
+            st.selected._bindPose = bones.map((b) => {
+                const r = b.getLocalEulerAngles ? b.getLocalEulerAngles() : { x: 0, y: 0, z: 0 };
+                return { x: Number(r.x) || 0, y: Number(r.y) || 0, z: Number(r.z) || 0 };
+            });
+        }
+
+        return {
+            hasSkinned: bones.length > 0,
+            bones: bones,
+            bindPose: st.selected._bindPose || []
+        };
     }
 
     /**
@@ -65,7 +93,7 @@
     }
 
     /**
-     * Membuka panel editor tulang dan mengisi daftar bone dari model terpilih.
+     * Membuka panel editor tulang dan mengisi daftar bone unik dari seluruh hierarki model terpilih.
      */
     function setupBoneEditing() {
         const st = getBoneState();
@@ -73,21 +101,10 @@
             setBoneStatus("⚠ Pilih objek dulu sebelum Edit Bone!");
             return;
         }
-        const skin = getSelectedSkinInstance();
-        if (!skin) {
+        const rig = getSelectedRigData();
+        if (!rig.hasSkinned || rig.bones.length === 0) {
             setBoneStatus("⚠ Objek ini tidak memiliki tulang (Bone).");
             return;
-        }
-
-        if (!Array.isArray(st.selected._bindPose) || st.selected._bindPose.length < skin.bones.length) {
-            st.selected._bindPose = skin.bones.map(b => {
-                const rot = (b && typeof b.getLocalEulerAngles === 'function')
-                    ? b.getLocalEulerAngles()
-                    : { x: 0, y: 0, z: 0 };
-                return (rot && typeof rot.clone === 'function')
-                    ? rot.clone()
-                    : { x: rot.x || 0, y: rot.y || 0, z: rot.z || 0 };
-            });
         }
 
         const bonePanel = document.getElementById('bonePanel');
@@ -98,8 +115,8 @@
         bonePanel.style.display = 'block';
         boneEditControls.style.display = 'none';
 
-        boneList.innerHTML = '<option value="">-- Pilih Tulang --</option>';
-        skin.bones.forEach((boneEntity, index) => {
+        boneList.innerHTML = '<option value="">-- Pilih Tulang (' + rig.bones.length + ') --</option>';
+        rig.bones.forEach((boneEntity, index) => {
             const opt = document.createElement('option');
             opt.value = String(index);
             opt.textContent = (boneEntity && boneEntity.name) ? boneEntity.name : `Bone_${index}`;
@@ -107,8 +124,8 @@
         });
 
         boneList.onchange = (e) => {
-            const currentSkin = getSelectedSkinInstance();
-            if (!currentSkin) return;
+            const currentRig = getSelectedRigData();
+            if (!currentRig.hasSkinned) return;
 
             const raw = e.target.value;
             if (raw === "") {
@@ -116,12 +133,12 @@
                 return;
             }
             const idx = parseInt(raw, 10);
-            if (isNaN(idx) || idx < 0 || idx >= currentSkin.bones.length) {
+            if (isNaN(idx) || idx < 0 || idx >= currentRig.bones.length) {
                 boneEditControls.style.display = 'none';
                 return;
             }
 
-            const bone = currentSkin.bones[idx];
+            const bone = currentRig.bones[idx];
             if (!bone || typeof bone.getLocalEulerAngles !== 'function' || typeof bone.setLocalEulerAngles !== 'function') {
                 boneEditControls.style.display = 'none';
                 return;
@@ -147,7 +164,7 @@
                     isFinite(y) ? y : 0,
                     isFinite(z) ? z : 0
                 );
-                setBoneStatus("⚠ Bone diubah (preview). Save/Undo/Dup akan reset ke T-pose.");
+                setBoneStatus("🦴 Bone '" + (bone.name || idx) + "' diubah.");
             };
 
             if (rxEl) rxEl.oninput = () => { if (rxO) rxO.textContent = rxEl.value; updateBone(); };
@@ -156,7 +173,7 @@
         };
 
         bindBoneControls();
-        setBoneStatus("🦴 Pilih tulang dari daftar untuk mengatur rotasinya.");
+        setBoneStatus("🦴 " + rig.bones.length + " tulang terdeteksi — pilih dari daftar.");
     }
     window.setupBoneEditing = setupBoneEditing;
 
@@ -165,19 +182,19 @@
      */
     function resetSelectedBonePose() {
         const st = getBoneState();
-        if (!st || !st.selected || !Array.isArray(st.selected._bindPose)) return;
-        const skin = getSelectedSkinInstance();
-        if (!skin) return;
+        if (!st || !st.selected) return;
+        const rig = getSelectedRigData();
+        if (!rig.hasSkinned) return;
 
         const boneList = document.getElementById('boneList');
         const idx = boneList ? parseInt(boneList.value, 10) : NaN;
-        if (isNaN(idx) || idx < 0 || idx >= skin.bones.length) {
+        if (isNaN(idx) || idx < 0 || idx >= rig.bones.length) {
             setBoneStatus("⚠ Pilih bone dulu sebelum reset!");
             return;
         }
 
-        const bp = st.selected._bindPose[idx];
-        const bone = skin.bones[idx];
+        const bp = rig.bindPose[idx];
+        const bone = rig.bones[idx];
         if (!bp || !bone || typeof bone.setLocalEulerAngles !== 'function') return;
 
         bone.setLocalEulerAngles(bp.x, bp.y, bp.z);
@@ -190,12 +207,12 @@
      */
     function resetAllBonesPose() {
         const st = getBoneState();
-        if (!st || !st.selected || !Array.isArray(st.selected._bindPose)) return;
-        const skin = getSelectedSkinInstance();
-        if (!skin) return;
+        if (!st || !st.selected) return;
+        const rig = getSelectedRigData();
+        if (!rig.hasSkinned) return;
 
-        skin.bones.forEach((bone, i) => {
-            const bp = st.selected._bindPose[i];
+        rig.bones.forEach((bone, i) => {
+            const bp = rig.bindPose[i];
             if (bp && bone && typeof bone.setLocalEulerAngles === 'function') {
                 bone.setLocalEulerAngles(bp.x, bp.y, bp.z);
             }
@@ -203,8 +220,8 @@
 
         const boneList = document.getElementById('boneList');
         const selectedIdx = boneList ? parseInt(boneList.value, 10) : NaN;
-        if (!isNaN(selectedIdx) && selectedIdx >= 0 && selectedIdx < st.selected._bindPose.length) {
-            syncBoneSlidersFromEuler(st.selected._bindPose[selectedIdx]);
+        if (!isNaN(selectedIdx) && selectedIdx >= 0 && selectedIdx < rig.bindPose.length) {
+            syncBoneSlidersFromEuler(rig.bindPose[selectedIdx]);
         }
 
         setBoneStatus("✓ Semua bone di-reset ke bind pose.");
