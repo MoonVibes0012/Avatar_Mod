@@ -19,6 +19,25 @@
         }[c]));
     }
 
+    function inspectEntityRig(entity) {
+        if (!entity) return { hasSkinned: false, bones: [], skinInstances: [] };
+        if (typeof window.collectRigFromEntity === 'function') {
+            return window.collectRigFromEntity(entity, false);
+        }
+        const renders = typeof entity.findComponents === 'function'
+            ? (entity.findComponents('render') || [])
+            : (entity.render ? [entity.render] : []);
+        let hasSkinned = false;
+        for (let i = 0; i < renders.length; i++) {
+            const rc = renders[i];
+            if (rc && Array.isArray(rc.meshInstances) && rc.meshInstances.some(mi => mi && mi.skinInstance)) {
+                hasSkinned = true;
+                break;
+            }
+        }
+        return { hasSkinned: hasSkinned, bones: [], skinInstances: [] };
+    }
+
     function resetMode() {
         S.mode = 'object';
         document.querySelectorAll('[data-mode]').forEach(b => {
@@ -40,8 +59,8 @@
         }
 
         if (mode === 'vertex' || mode === 'bone') {
-            const rc = S.selected.findComponent('render');
-            const hasSkinned = rc && rc.meshInstances && rc.meshInstances.some(mi => mi && mi.skinInstance);
+            const rigInfo = inspectEntityRig(S.selected);
+            const hasSkinned = rigInfo.hasSkinned;
             if (mode === 'vertex' && hasSkinned) {
                 alert("Mode Vertex tidak tersedia untuk model skinned.\n\nGunakan mode Bone untuk model VRM/GLB skinned.");
                 return;
@@ -154,6 +173,8 @@
         updateTree();
 
         if (S.selected) {
+            // Pastikan rig & _bindPose terdeteksi segera saat entitas dipilih
+            inspectEntityRig(S.selected);
             syncTransformUI(S.selected);
 
             if (S.selected.render && S.selected.render.material) {
