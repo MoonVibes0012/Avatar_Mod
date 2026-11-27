@@ -1,18 +1,19 @@
 /* ===== VTuber Forge — js/ui/motion_controls.js ===== */
-// Kontrol motion prosedural (Spin, Pulse, Wobble) & pemutaran animation clip
+// Kontrol motion prosedural (Spin, Pulse, Wobble) & pemutaran animation clip (Interpolasi LINEAR/STEP/CUBICSPLINE + Quaternion SLERP)
 
 (function () {
     'use strict';
 
-    let activeClipTimer = null;
     let activeClipElapsed = 0;
     let activeClipDuration = 1.0;
     let activeClipPlaying = false;
     let activeClipTracks = null;
+    let loopHooked = false;
 
-    /**
-     * Mengambil elemen DOM berdasarkan ID secara aman.
-     */
+    const tmpQuatA = (typeof pc !== 'undefined' && pc.Quat) ? new pc.Quat() : null;
+    const tmpQuatB = (typeof pc !== 'undefined' && pc.Quat) ? new pc.Quat() : null;
+    const tmpQuatOut = (typeof pc !== 'undefined' && pc.Quat) ? new pc.Quat() : null;
+
     function byId(id) {
         try {
             return document.getElementById(id);
@@ -21,9 +22,6 @@
         }
     }
 
-    /**
-     * Memperbarui teks status pada bar status aplikasi jika elemen tersedia.
-     */
     function setMotionStatus(msg) {
         try {
             const el = byId('status');
@@ -31,9 +29,16 @@
         } catch (e) {}
     }
 
-    /**
-     * Mengambil entitas objek terpilih pada state global S secara aman.
-     */
+    function getAppSafe() {
+        if (typeof window.getPcApp === 'function') {
+            try {
+                const a = window.getPcApp();
+                if (a) return a;
+            } catch (e) {}
+        }
+        return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
+    }
+
     function getSelectedTarget() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
@@ -42,9 +47,6 @@
         return null;
     }
 
-    /**
-     * Mencatat snapshot undo/redo secara aman setelah perubahan motion prosedural.
-     */
     function commitHistorySafe() {
         if (typeof window.saveState === 'function') {
             try { window.saveState(); } catch (e) {}
@@ -55,10 +57,6 @@
         } catch (e) {}
     }
 
-    /**
-     * Menyinkronkan daftar clip pada dropdown #animSelect dengan properti _animAssets/_animNames
-     * milik objek yang sedang dipilih.
-     */
     function syncAnimSelectOptions(target) {
         const animSel = byId('animSelect');
         if (!animSel) return;
@@ -85,9 +83,6 @@
         }
     }
 
-    /**
-     * Menyinkronkan status aktif tombol Spin, Pulse, dan Wobble serta daftar clip animasi.
-     */
     function syncMotionButtons(entity) {
         const target = entity !== undefined ? entity : getSelectedTarget();
         const spinBtn = byId('animSpin');
@@ -100,86 +95,211 @@
     }
     window.syncMotionButtons = syncMotionButtons;
 
-    /**
-     * Menghentikan loop evaluasi track animasi manual jika sedang berjalan.
-     */
     function stopManualTrackLoop() {
         activeClipPlaying = false;
-        if (activeClipTimer !== null) {
-            clearInterval(activeClipTimer);
-            activeClipTimer = null;
+    }
+
+    function findKeyframeInterval(times, t) {
+        const n = times.length;
+        if (n <= 1 || t <= Number(times[0])) {
+            return { i0: 0, i1: 0, alpha: 0, dt: 0 };
         }
+        const lastIdx = n - 1;
+        if (t >= Number(times[lastIdx])) {
+            return { i0: lastIdx, i1: lastIdx, alpha: 0, dt: 0 };
+        }
+        // Binary search untuk efisiensi pada klip panjang
+        let lo = 0;
+        let hi = lastIdx;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (Number(times[mid]) <= t) lo = mid;
+            else hi = mid;
+        }
+        const t0 = Number(times[lo]) || 0;
+        const t1 = Number(times[hi]) || t0;
+        const span = t1 - t0;
+        const alpha = span > 1e-6 ? Math.max(0, Math.min(1, (t - t0) / span)) : 0;
+        return { i0: lo, i1: hi, alpha: alpha, dt: span };
+    }
+
+    function sampleVec3Track(values, stride, i0, i1, alpha, dt, interp, defX, defY, defZ) {
+        if (interp === 'CUBICSPLINE' && values.length >= (i1 * 3 + 3) * stride) {
+            const b0 = i0 * 3 * stride;
+            const b1 = i1 * 3 * stride;
+            const s = alpha;
+            const s2 = s * s;
+            const s3 = s2 * s;
+            const h00 = 2 * s3 - 3 * s2 + 1;
+            const h10 = s3 - 2 * s2 + s;
+            const h01 = -2 * s3 + 3 * s2;
+            const h11 = s3 - s2;
+
+            const out = [defX, defY, defZ];
+            for (let c = 0; c < 3; c++) {
+                const v0 = Number(values[b0 + stride + c]) || 0;
+                const outTan0 = Number(values[b0 + 2 * stride + c]) || 0;
+                const inTan1 = Number(values[b1 + c]) || 0;
+                const v1 = Number(values[b1 + stride + c]) || 0;
+                out[c] = h00 * v0 + h10 * dt * outTan0 + h01 * v1 + h11 * dt * inTan1;
+            }
+            return out;
+        }
+
+        const idx0 = Math.min(i0 * stride, values.length - stride);
+        const idx1 = Math.min(i1 * stride, values.length - stride);
+        const x0 = Number(values[idx0]);
+        const y0 = Number(values[idx0 + 1]);
+        const z0 = Number(values[idx0 + 2]);
+
+        if (interp === 'STEP' || idx0 === idx1 || alpha <= 0) {
+            return [
+                isFinite(x0) ? x0 : defX,
+                isFinite(y0) ? y0 : defY,
+                isFinite(z0) ? z0 : defZ
+            ];
+        }
+
+        const x1 = Number(values[idx1]);
+        const y1 = Number(values[idx1 + 1]);
+        const z1 = Number(values[idx1 + 2]);
+        return [
+            (isFinite(x0) ? x0 : defX) * (1 - alpha) + (isFinite(x1) ? x1 : defX) * alpha,
+            (isFinite(y0) ? y0 : defY) * (1 - alpha) + (isFinite(y1) ? y1 : defY) * alpha,
+            (isFinite(z0) ? z0 : defZ) * (1 - alpha) + (isFinite(z1) ? z1 : defZ) * alpha
+        ];
+    }
+
+    function sampleQuatTrack(values, i0, i1, alpha, dt, interp) {
+        const qA = tmpQuatA || new pc.Quat();
+        const qB = tmpQuatB || new pc.Quat();
+        const qOut = tmpQuatOut || new pc.Quat();
+
+        if (interp === 'CUBICSPLINE' && values.length >= (i1 * 3 + 3) * 4) {
+            const b0 = i0 * 12;
+            const b1 = i1 * 12;
+            const s = alpha;
+            const s2 = s * s;
+            const s3 = s2 * s;
+            const h00 = 2 * s3 - 3 * s2 + 1;
+            const h10 = s3 - 2 * s2 + s;
+            const h01 = -2 * s3 + 3 * s2;
+            const h11 = s3 - s2;
+
+            const c = [0, 0, 0, 1];
+            for (let k = 0; k < 4; k++) {
+                const v0 = Number(values[b0 + 4 + k]) || 0;
+                const outTan0 = Number(values[b0 + 8 + k]) || 0;
+                const inTan1 = Number(values[b1 + k]) || 0;
+                const v1 = Number(values[b1 + 4 + k]) || 0;
+                c[k] = h00 * v0 + h10 * dt * outTan0 + h01 * v1 + h11 * dt * inTan1;
+            }
+            qOut.set(c[0], c[1], c[2], c[3]);
+            if (typeof qOut.normalize === 'function') qOut.normalize();
+            return qOut;
+        }
+
+        const idx0 = Math.min(i0 * 4, values.length - 4);
+        qA.set(
+            Number(values[idx0]) || 0,
+            Number(values[idx0 + 1]) || 0,
+            Number(values[idx0 + 2]) || 0,
+            Number.isFinite(Number(values[idx0 + 3])) ? Number(values[idx0 + 3]) : 1
+        );
+        if (typeof qA.normalize === 'function') qA.normalize();
+
+        if (interp === 'STEP' || i0 === i1 || alpha <= 0) {
+            return qA;
+        }
+
+        const idx1 = Math.min(i1 * 4, values.length - 4);
+        qB.set(
+            Number(values[idx1]) || 0,
+            Number(values[idx1 + 1]) || 0,
+            Number(values[idx1 + 2]) || 0,
+            Number.isFinite(Number(values[idx1 + 3])) ? Number(values[idx1 + 3]) : 1
+        );
+        if (typeof qB.normalize === 'function') qB.normalize();
+
+        if (typeof qOut.slerp === 'function') {
+            qOut.slerp(qA, qB, alpha);
+        } else {
+            qOut.set(
+                qA.x + (qB.x - qA.x) * alpha,
+                qA.y + (qB.y - qA.y) * alpha,
+                qA.z + (qB.z - qA.z) * alpha,
+                qA.w + (qB.w - qA.w) * alpha
+            );
+            if (typeof qOut.normalize === 'function') qOut.normalize();
+        }
+        return qOut;
     }
 
     /**
-     * Mengevaluasi track animasi glTF pada waktu tertentu secara loop.
+     * Mengevaluasi track animasi glTF pada waktu tertentu dengan interpolasi STEP/LINEAR/CUBICSPLINE.
      */
     function applyManualTrackSample(tracks, timeSec, durationSec) {
         if (!Array.isArray(tracks) || tracks.length === 0) return;
         const dur = Math.max(0.01, Number(durationSec) || 1.0);
         const t = ((Number(timeSec) || 0) % dur + dur) % dur;
 
-        tracks.forEach((tr) => {
-            if (!tr || !tr.node || !tr.times || !tr.values || tr.times.length === 0) return;
-            const times = tr.times;
-            const values = tr.values;
+        for (let idx = 0; idx < tracks.length; idx++) {
+            const tr = tracks[idx];
+            if (!tr || !tr.node || !tr.times || !tr.values || tr.times.length === 0) continue;
 
-            let frameIdx = 0;
-            for (let i = 0; i < times.length; i++) {
-                if (Number(times[i]) <= t) frameIdx = i;
-                else break;
-            }
+            const interp = String(tr.interpolation || 'LINEAR').toUpperCase();
+            const iv = findKeyframeInterval(tr.times, t);
 
-            if (tr.path === 'translation' && values.length >= 3 && typeof tr.node.setLocalPosition === 'function') {
-                const baseIdx = Math.min(frameIdx * 3, values.length - 3);
-                tr.node.setLocalPosition(values[baseIdx] || 0, values[baseIdx + 1] || 0, values[baseIdx + 2] || 0);
-            } else if (tr.path === 'rotation' && values.length >= 4 && typeof tr.node.setLocalRotation === 'function') {
-                const baseIdx = Math.min(frameIdx * 4, values.length - 4);
-                tr.node.setLocalRotation(
-                    new pc.Quat(values[baseIdx] || 0, values[baseIdx + 1] || 0, values[baseIdx + 2] || 0, values[baseIdx + 3] || 1)
-                );
-            } else if (tr.path === 'scale' && values.length >= 3 && typeof tr.node.setLocalScale === 'function') {
-                const baseIdx = Math.min(frameIdx * 3, values.length - 3);
-                tr.node.setLocalScale(values[baseIdx] || 1, values[baseIdx + 1] || 1, values[baseIdx + 2] || 1);
+            if (tr.path === 'translation' && tr.values.length >= 3 && typeof tr.node.setLocalPosition === 'function') {
+                const p = sampleVec3Track(tr.values, 3, iv.i0, iv.i1, iv.alpha, iv.dt, interp, 0, 0, 0);
+                tr.node.setLocalPosition(p[0], p[1], p[2]);
+            } else if (tr.path === 'rotation' && tr.values.length >= 4 && typeof tr.node.setLocalRotation === 'function') {
+                const q = sampleQuatTrack(tr.values, iv.i0, iv.i1, iv.alpha, iv.dt, interp);
+                tr.node.setLocalRotation(q);
+            } else if (tr.path === 'scale' && tr.values.length >= 3 && typeof tr.node.setLocalScale === 'function') {
+                const s = sampleVec3Track(tr.values, 3, iv.i0, iv.i1, iv.alpha, iv.dt, interp, 1, 1, 1);
+                tr.node.setLocalScale(s[0], s[1], s[2]);
             }
-        });
+        }
     }
 
     /**
-     * Memulai loop pemutaran track animasi bila komponen pc.Animation tidak memiliki resource aktif.
+     * Memastikan loop evaluasi clip animasi terikat ke siklus frame PlayCanvas (`app.on('update', dt)`).
      */
+    function ensureAppUpdateHook() {
+        if (loopHooked) return true;
+        const pcApp = getAppSafe();
+        if (!pcApp || typeof pcApp.on !== 'function') return false;
+        loopHooked = true;
+
+        pcApp.on('update', (dt) => {
+            if (!activeClipPlaying || !activeClipTracks) return;
+            const safeDt = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? Math.min(dt, 0.1) : 0.016;
+            activeClipElapsed += safeDt;
+            applyManualTrackSample(activeClipTracks, activeClipElapsed, activeClipDuration);
+        });
+        return true;
+    }
+
     function startManualTrackLoop(asset) {
         stopManualTrackLoop();
         if (!asset || !Array.isArray(asset._gltfTracks) || asset._gltfTracks.length === 0) return;
 
+        ensureAppUpdateHook();
         activeClipTracks = asset._gltfTracks;
         activeClipDuration = Math.max(0.05, Number(asset.duration) || 1.0);
         activeClipPlaying = true;
-
-        let lastTick = Date.now();
-        activeClipTimer = setInterval(() => {
-            if (!activeClipPlaying || !activeClipTracks) return;
-            const now = Date.now();
-            const dt = Math.min(0.1, Math.max(0, (now - lastTick) / 1000));
-            lastTick = now;
-            activeClipElapsed += dt;
-            applyManualTrackSample(activeClipTracks, activeClipElapsed, activeClipDuration);
-        }, 33);
     }
 
-    /**
-     * Mengikat event klik sekali pada elemen tombol tertentu.
-     */
     function bindOnce(el, handler) {
         if (!el || el.dataset.vtfMotionBound === '1') return;
         el.dataset.vtfMotionBound = '1';
         el.onclick = handler;
     }
 
-    /**
-     * Menghubungkan seluruh tombol motion prosedural dan kontrol pemutaran clip animasi.
-     */
     function bindMotionControls() {
+        ensureAppUpdateHook();
+
         bindOnce(byId('animSpin'), () => {
             const target = getSelectedTarget();
             if (!target) return setMotionStatus('⚠ Pilih objek dulu untuk Auto-Spin.');
@@ -287,10 +407,6 @@
         bindOnce(byId('animPause'), () => {
             const target = getSelectedTarget();
             activeClipPlaying = false;
-            if (activeClipTimer !== null) {
-                clearInterval(activeClipTimer);
-                activeClipTimer = null;
-            }
             if (target && target.animation && typeof target.animation.pause === 'function') {
                 try { target.animation.pause(); } catch (err) {}
             }
@@ -303,6 +419,9 @@
             stopManualTrackLoop();
             if (target && target.animation && typeof target.animation.stop === 'function') {
                 try { target.animation.stop(); } catch (err) {}
+            }
+            if (activeClipTracks) {
+                applyManualTrackSample(activeClipTracks, 0, activeClipDuration);
             }
             setMotionStatus('⏹ Stopped');
         });
