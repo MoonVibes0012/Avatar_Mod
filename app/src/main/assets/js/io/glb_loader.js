@@ -1,12 +1,9 @@
 /* ===== VTuber Forge — js/io/glb_loader.js ===== */
-// Loader & Builder model .GLB / .VRM (Fix VEC4 Skinning Stride, Standardized _meshCache, VRM Textures, & Animations)
+// Loader & Builder model .GLB / .VRM (Fix VEC4 Skinning Stride, Standardized _meshCache, VRM Textures, Rig BindPose & Animations)
 
 (function () {
     'use strict';
 
-    /**
-     * Mengambil instance pc.Application aktif secara aman.
-     */
     function getAppSafe() {
         if (typeof window.getPcApp === 'function') {
             try {
@@ -17,18 +14,12 @@
         return (typeof window.app !== 'undefined' && window.app) ? window.app : null;
     }
 
-    /**
-     * Mengambil state scene global `S` secara aman.
-     */
     function getStateSafe() {
         if (typeof window.S !== 'undefined' && window.S) return window.S;
         if (!window.S) window.S = { objects: [], selected: null, cnt: 1 };
         return window.S;
     }
 
-    /**
-     * Memperbarui teks status pada elemen #status dan log debug jika tersedia.
-     */
     function setGlbStatus(msg) {
         try {
             const el = document.getElementById('status');
@@ -39,9 +30,6 @@
         }
     }
 
-    /**
-     * Membatasi rentang byte agar aman dari bacaan di luar panjang buffer.
-     */
     function clampByteRange(totalLength, offset, length) {
         const safeTotal = Math.max(0, Math.floor(Number(totalLength) || 0));
         const safeOffset = Math.max(0, Math.min(safeTotal, Math.floor(Number(offset) || 0)));
@@ -50,9 +38,6 @@
         return { start: safeOffset, end: safeOffset + safeLen, length: safeLen };
     }
 
-    /**
-     * Memuat elemen HTMLImageElement dari URL atau data URI secara asynchronous.
-     */
     function loadImageElement(srcUrl) {
         return new Promise((resolve) => {
             if (!srcUrl) return resolve(null);
@@ -64,9 +49,6 @@
         });
     }
 
-    /**
-     * Mengonversi Blob menjadi Data URL sebagai fallback WebView.
-     */
     function blobToDataUrl(blob) {
         return new Promise((resolve) => {
             try {
@@ -80,9 +62,6 @@
         });
     }
 
-    /**
-     * Mendecode seluruh tekstur gambar dari chunk GLB/VRM menjadi objek pc.Texture.
-     */
     function decodeGlbTextures(gltf, bin, graphicsDevice) {
         const textures = [];
         if (!Array.isArray(gltf.images) || gltf.images.length === 0) {
@@ -179,9 +158,6 @@
         return Promise.all(tasks).then(() => textures);
     }
 
-    /**
-     * Mengambil tekstur berdasarkan indeks tekstur glTF.
-     */
     function resolveTextureByIndex(gltf, textures, texIdx) {
         if (texIdx === undefined || texIdx === null || !Array.isArray(gltf.textures)) return null;
         const texDef = gltf.textures[texIdx];
@@ -189,9 +165,6 @@
         return textures[texDef.source] || null;
     }
 
-    /**
-     * Membangun daftar material standar PlayCanvas dari definisi material glTF/VRM.
-     */
     function buildGlbMaterials(gltf, textures) {
         const vrmMatProps = (gltf.extensions && gltf.extensions.VRM && Array.isArray(gltf.extensions.VRM.materialProperties))
             ? gltf.extensions.VRM.materialProperties
@@ -252,9 +225,6 @@
         });
     }
 
-    /**
-     * Membuat fungsi pembaca accessor glTF yang aman terhadap stride dan batas byte buffer.
-     */
     function createAccessorReader(gltf, bin) {
         return (idx) => {
             if (idx === undefined || idx === null || !gltf.accessors || !gltf.accessors[idx]) return null;
@@ -331,9 +301,6 @@
         };
     }
 
-    /**
-     * Membangun objek pc.Mesh tunggal dengan atribut posisi, normal, UV, indeks, dan opsional skin stream (VEC4).
-     */
     function buildSingleMesh(gd, numVerts, posArr, normArr, uvArr, safeIdx, joints, weights, includeSkinStream) {
         const mesh = new pc.Mesh(gd);
         mesh.setPositions(posArr);
@@ -395,9 +362,6 @@
         return { mesh: mesh, skinStreamAttached: skinStreamAttached };
     }
 
-    /**
-     * Mengekstrak clip animasi glTF menjadi objek clip yang kompatibel dengan PlayCanvas AnimationComponent.
-     */
     function extractGlbAnimations(gltf, getAcc, nodeEntities, rootEnt) {
         const animAssets = [];
         const animNames = [];
@@ -434,6 +398,7 @@
 
                 parsedTracks.push({
                     path: ch.target.path,
+                    interpolation: sampler.interpolation || 'LINEAR',
                     times: times,
                     values: values,
                     node: targetEnt
@@ -541,9 +506,6 @@
         return { animAssets: animAssets, animNames: animNames };
     }
 
-    /**
-     * Mengimpor dan merakit file model .GLB / .VRM ke dalam scene PlayCanvas.
-     */
     function importGLB(file) {
         const pcApp = getAppSafe();
         const st = getStateSafe();
@@ -605,6 +567,7 @@
                 st.cnt = st.cnt || 1;
                 st.objects = st.objects || [];
                 const rootEnt = new pc.Entity(file.name.replace(/\.(glb|vrm|gltf)$/i, '') + '_' + (st.cnt++));
+                rootEnt._gltfJson = gltf;
                 const allPositions = [];
                 const allIndices = [];
                 const allUvs = [];
@@ -625,6 +588,8 @@
                     }
                     return ent;
                 });
+
+                rootEnt._nodeEntities = nodeEntities;
 
                 nodes.forEach((n, i) => {
                     if (n && Array.isArray(n.children)) {
@@ -919,7 +884,13 @@
                     -((minZ + maxZ) * 0.5) * normScale
                 );
 
-                // Standarisasi _meshCache ke format Array [{ pos, idx, uvs, normals }] agar kompatibel dengan serialize.js & history.js
+                // Inisialisasi & kunci _bindPose rig pada seluruh hierarki segera setelah model dimuat
+                let detectedBonesCount = 0;
+                if (typeof window.collectRigFromEntity === 'function') {
+                    const rigInfo = window.collectRigFromEntity(rootEnt, true);
+                    detectedBonesCount = rigInfo.bones.length;
+                }
+
                 const cacheEntry = {
                     pos: allPositions,
                     idx: allIndices,
@@ -941,7 +912,7 @@
                 if (typeof window.updateTree === 'function') window.updateTree();
                 if (typeof window.saveState === 'function') window.saveState();
 
-                setGlbStatus(`✓ Model Imported: ${file.name} (Tekstur: ${loadedTexCount})`);
+                setGlbStatus(`✓ Model Imported: ${file.name} (Tekstur: ${loadedTexCount}, Tulang: ${detectedBonesCount})`);
             } catch (err) {
                 const detail = (err && err.message) ? err.message : String(err);
                 const msg = `Gagal import GLB/VRM [${stage}]: ${detail}`;
