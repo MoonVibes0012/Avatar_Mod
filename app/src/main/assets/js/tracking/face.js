@@ -4,12 +4,15 @@
 (function () {
     'use strict';
 
+    const INFERENCE_INTERVAL_MS = 55; // ~18 FPS inferensi agar CPU/GPU tidak terbebani
+
     let faceTrackingActive = false;
     let faceMeshInstance = null;
     let cameraStream = null;
     let videoElement = null;
     let animFrameId = null;
     let isProcessingFrame = false;
+    let lastInferenceSendMs = 0;
 
     let headBone = null;
     let neckBone = null;
@@ -18,9 +21,6 @@
     let targetHeadRot = { x: 0, y: 0, z: 0 };
     let currentHeadRot = { x: 0, y: 0, z: 0 };
 
-    /**
-     * Mengambil elemen DOM berdasarkan ID secara aman.
-     */
     function byId(id) {
         try {
             return document.getElementById(id);
@@ -29,9 +29,6 @@
         }
     }
 
-    /**
-     * Memperbarui teks status pada elemen #status jika tersedia.
-     */
     function setFaceStatus(msg) {
         try {
             const el = byId('status');
@@ -39,9 +36,6 @@
         } catch (e) {}
     }
 
-    /**
-     * Mencatat log debug ke overlay debug atau konsol browser.
-     */
     function logFace(msg) {
         if (typeof window.dbg === 'function') {
             try { window.dbg(msg); } catch (e) {}
@@ -50,9 +44,6 @@
         }
     }
 
-    /**
-     * Mengambil entitas model terpilih pada state global S secara aman.
-     */
     function getFaceSelected() {
         if (typeof window.S !== 'undefined' && window.S && window.S.selected) return window.S.selected;
         try {
@@ -61,9 +52,6 @@
         return null;
     }
 
-    /**
-     * Menyinkronkan status visual tombol Face Tracking di toolbar dan panel.
-     */
     function updateFaceButtonsState(active) {
         const btnTop = byId('btnFaceTrack');
         const btnPanel = byId('btnFaceTrackToggle');
@@ -71,21 +59,20 @@
         if (btnPanel) btnPanel.classList.toggle('active', !!active);
     }
 
-    /**
-     * Mencari tulang kepala (Head) dan leher (Neck) dari hierarki skin entitas terpilih.
-     */
     function findHeadAndNeckBones(entity) {
         headBone = null;
         neckBone = null;
         headBindEuler = null;
         neckBindEuler = null;
-        if (!entity || typeof entity.findComponent !== 'function') return;
+        if (!entity || typeof entity.findComponents !== 'function') return;
 
-        const rc = entity.findComponent('render');
-        if (!rc || !Array.isArray(rc.meshInstances)) return;
+        const renders = entity.findComponents('render') || [];
+        for (let rIdx = 0; rIdx < renders.length; rIdx++) {
+            const rc = renders[rIdx];
+            if (!rc || !Array.isArray(rc.meshInstances)) continue;
 
-        for (const mi of rc.meshInstances) {
-            if (mi && mi.skinInstance && Array.isArray(mi.skinInstance.bones)) {
+            for (const mi of rc.meshInstances) {
+                if (!mi || !mi.skinInstance || !Array.isArray(mi.skinInstance.bones)) continue;
                 const bones = mi.skinInstance.bones;
                 for (let i = 0; i < bones.length; i++) {
                     const b = bones[i];
@@ -95,24 +82,58 @@
                         headBone = b;
                         if (typeof b.getLocalEulerAngles === 'function') {
                             const r = b.getLocalEulerAngles();
-                            headBindEuler = (r && typeof r.clone === 'function') ? r.clone() : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
+                            headBindEuler = (r && typeof r.clone === 'function')
+                                ? r.clone()
+                                : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
                         }
                     } else if (!neckBone && (lower.includes('neck') || lower.includes('leher'))) {
                         neckBone = b;
                         if (typeof b.getLocalEulerAngles === 'function') {
                             const r = b.getLocalEulerAngles();
-                            neckBindEuler = (r && typeof r.clone === 'function') ? r.clone() : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
+                            neckBindEuler = (r && typeof r.clone === 'function')
+                                ? r.clone()
+                                : { x: r.x || 0, y: r.y || 0, z: r.z || 0 };
                         }
                     }
                 }
-                if (headBone) break;
+                if (headBone) return;
             }
         }
     }
 
-    /**
-     * Menerapkan interpolasi rotasi kepala hasil deteksi wajah ke tulang kepala/leher.
-     */
+    function applyBlinkWeightToModel(selected, blinkVal) {
+        if (!selected) return;
+        const clamped = Math.max(0, Math.min(1, Number(blinkVal) || 0));
+
+        if (Array.isArray(selected._morphSlots) && selected._morphSlots.length > 0) {
+            for (let i = 0; i < selected._morphSlots.length; i++) {
+                const slot = selected._morphSlots[i];
+                const lower = String((slot && (slot.targetName || slot.displayName)) || '').toLowerCase();
+                if (lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose')) {
+                    try {
+                        if (slot.morphInstance && typeof slot.morphInstance.setWeight === 'function') {
+                            slot.morphInstance.setWeight(slot.targetIndex, clamped);
+                        }
+                    } catch (e) {}
+                }
+            }
+            return;
+        }
+
+        if (selected._morphInstance && Array.isArray(selected._morphNames)) {
+            selected._morphNames.forEach((name, idx) => {
+                const lower = String(name || '').toLowerCase();
+                if (lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose')) {
+                    try {
+                        if (typeof selected._morphInstance.setWeight === 'function') {
+                            selected._morphInstance.setWeight(idx, clamped);
+                        }
+                    } catch (e) {}
+                }
+            });
+        }
+    }
+
     function applyFaceHeadRotation() {
         const selected = getFaceSelected();
         if (!selected || !faceTrackingActive) return;
@@ -147,16 +168,11 @@
         }
     }
 
-    /**
-     * Memproses landmark wajah dari MediaPipe FaceMesh menggunakan Kalidokit atau fallback hidung.
-     */
     function onFaceMeshResults(results) {
         if (!faceTrackingActive) return;
 
         const landmarks = results && results.multiFaceLandmarks && results.multiFaceLandmarks[0];
-        if (!landmarks) {
-            return;
-        }
+        if (!landmarks) return;
 
         const KalidoKitRef = (typeof window.Kalidokit !== 'undefined')
             ? window.Kalidokit
@@ -187,18 +203,9 @@
                 }
 
                 const selected = getFaceSelected();
-                if (solved && solved.eye && selected && selected._morphInstance && Array.isArray(selected._morphNames)) {
-                    const blinkVal = Math.max(0, Math.min(1, 1 - Math.min(solved.eye.l || 1, solved.eye.r || 1)));
-                    selected._morphNames.forEach((name, idx) => {
-                        const lower = String(name || '').toLowerCase();
-                        if (lower.includes('blink') || lower.includes('eye_close') || lower.includes('eyeclose')) {
-                            try {
-                                if (typeof selected._morphInstance.setWeight === 'function') {
-                                    selected._morphInstance.setWeight(idx, blinkVal);
-                                }
-                            } catch (e) {}
-                        }
-                    });
+                if (solved && solved.eye && selected) {
+                    const blinkVal = 1 - Math.min(solved.eye.l || 1, solved.eye.r || 1);
+                    applyBlinkWeightToModel(selected, blinkVal);
                 }
             } catch (e) {}
         } else {
@@ -217,14 +224,22 @@
         applyFaceHeadRotation();
     }
 
-    /**
-     * Loop pemrosesan frame video kamera secara berkala selama tracking aktif.
-     */
     async function processVideoFrameLoop() {
         if (!faceTrackingActive) return;
 
-        if (videoElement && faceMeshInstance && !isProcessingFrame && videoElement.readyState >= 2) {
+        const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+
+        if (
+            videoElement &&
+            faceMeshInstance &&
+            !isProcessingFrame &&
+            videoElement.readyState >= 2 &&
+            (now - lastInferenceSendMs) >= INFERENCE_INTERVAL_MS
+        ) {
             isProcessingFrame = true;
+            lastInferenceSendMs = now;
             try {
                 await faceMeshInstance.send({ image: videoElement });
             } catch (e) {
@@ -236,9 +251,6 @@
         animFrameId = requestAnimationFrame(processVideoFrameLoop);
     }
 
-    /**
-     * Memulai aliran kamera depan dan inisialisasi MediaPipe FaceMesh.
-     */
     async function startFaceTracking() {
         if (faceTrackingActive) return;
 
@@ -297,8 +309,9 @@
             }
 
             faceTrackingActive = true;
+            lastInferenceSendMs = 0;
             updateFaceButtonsState(true);
-            setFaceStatus("📷 Face Tracking aktif — hadapkan wajah ke kamera");
+            setFaceStatus("📷 Face Tracking aktif (~18 FPS) — hadapkan wajah ke kamera");
             logFace("✅ Face tracking started");
 
             animFrameId = requestAnimationFrame(processVideoFrameLoop);
@@ -309,12 +322,10 @@
         }
     }
 
-    /**
-     * Menghentikan kamera Face Tracking, membersihkan stream, dan mereset rotasi kepala.
-     */
     function stopFaceTracking() {
         faceTrackingActive = false;
         isProcessingFrame = false;
+        lastInferenceSendMs = 0;
 
         if (animFrameId !== null) {
             cancelAnimationFrame(animFrameId);
@@ -359,9 +370,6 @@
         logFace("⏹ Face tracking stopped");
     }
 
-    /**
-     * Menukar status aktif/nonaktif Face Tracking.
-     */
     function toggleFaceTracking() {
         if (faceTrackingActive) {
             stopFaceTracking();
@@ -370,9 +378,6 @@
         }
     }
 
-    /**
-     * Menghubungkan event klik tombol Face Tracking setelah panel dirender.
-     */
     function bindFaceControls() {
         try {
             const btnTop = byId('btnFaceTrack');
