@@ -1,5 +1,5 @@
 /* ===== VTuber Forge — js/core/pc_compat.js ===== */
-// Modul Kompatibilitas PlayCanvas (Safe Mesh Streams, Indices, Normals & Morph)
+// Modul Kompatibilitas PlayCanvas (Safe Mesh Streams, Indices, Normals, Morph & Rig Hierarchy Helper)
 
 (function () {
     'use strict';
@@ -57,7 +57,6 @@
             if (v > maxIdx) maxIdx = v;
         }
 
-        // Gunakan Uint32Array jika indeks > 65535 atau jumlah elemen ganjil (menghindari byteLength kelipatan 2 non-4)
         const useUint32 = (maxIdx > 65535) || (plain.length % 2 !== 0);
         return useUint32 ? new Uint32Array(plain) : new Uint16Array(plain);
     }
@@ -66,7 +65,7 @@
         const verts = Math.max(0, Math.floor(Number(numVerts) || 0));
         const fallback = new Float32Array(verts * 3);
         for (let i = 1; i < fallback.length; i += 3) {
-            fallback[i] = 1; // (0, 1, 0)
+            fallback[i] = 1;
         }
 
         if (!posArr || posArr.length < verts * 3 || verts <= 0) return fallback;
@@ -81,9 +80,7 @@
                     return toFloat32Safe(calc, verts * 3);
                 }
             }
-        } catch (e) {
-            // Fallback ke normal default jika pc.calculateNormals gagal pada variasi mesh tertentu
-        }
+        } catch (e) {}
         return fallback;
     }
 
@@ -95,7 +92,6 @@
             mesh.setVertexStream(semantic, dataTypedArray, components, dataType, !!normalize);
             return true;
         } catch (e1) {
-            // Beberapa versi PlayCanvas menerima setVertexStream tanpa argumen ke-5/ke-6 atau dengan semantic string
             try {
                 mesh.setVertexStream(semantic, dataTypedArray, components, dataType);
                 return true;
@@ -194,14 +190,111 @@
         };
     }
 
+    /**
+     * Memindai seluruh komponen render dalam hierarki entitas (termasuk root dan semua anak),
+     * mengumpulkan seluruh skinInstance serta daftar tulang unik, dan mengunci _bindPose awal.
+     */
+    function collectRigFromEntity(entity, forceCaptureBindPose) {
+        const result = {
+            hasSkinned: false,
+            renderComponents: [],
+            skinInstances: [],
+            bones: [],
+            bindPose: []
+        };
+        if (!entity) return result;
+
+        let renders = [];
+        if (typeof entity.findComponents === 'function') {
+            renders = entity.findComponents('render') || [];
+        } else if (entity.render) {
+            renders = [entity.render];
+        }
+
+        result.renderComponents = renders;
+
+        const seenSkins = new Set();
+        const seenBones = new Set();
+
+        for (let i = 0; i < renders.length; i++) {
+            const rc = renders[i];
+            if (!rc || !Array.isArray(rc.meshInstances)) continue;
+            for (let j = 0; j < rc.meshInstances.length; j++) {
+                const mi = rc.meshInstances[j];
+                if (!mi || !mi.skinInstance) continue;
+                const si = mi.skinInstance;
+                if (!seenSkins.has(si)) {
+                    seenSkins.add(si);
+                    result.skinInstances.push(si);
+                }
+                if (Array.isArray(si.bones)) {
+                    for (let k = 0; k < si.bones.length; k++) {
+                        const b = si.bones[k];
+                        if (b && !seenBones.has(b)) {
+                            seenBones.add(b);
+                            result.bones.push(b);
+                        }
+                    }
+                }
+            }
+        }
+
+        result.hasSkinned = result.skinInstances.length > 0 && result.bones.length > 0;
+
+        if (result.hasSkinned) {
+            const needCapture = forceCaptureBindPose ||
+                !Array.isArray(entity._bindPose) ||
+                entity._bindPose.length !== result.bones.length;
+
+            if (needCapture) {
+                entity._bindPose = result.bones.map((b) => {
+                    const eul = (b && typeof b.getLocalEulerAngles === 'function')
+                        ? b.getLocalEulerAngles()
+                        : { x: 0, y: 0, z: 0 };
+                    const quat = (b && typeof b.getLocalRotation === 'function')
+                        ? b.getLocalRotation()
+                        : { x: 0, y: 0, z: 0, w: 1 };
+                    const pos = (b && typeof b.getLocalPosition === 'function')
+                        ? b.getLocalPosition()
+                        : { x: 0, y: 0, z: 0 };
+                    const scl = (b && typeof b.getLocalScale === 'function')
+                        ? b.getLocalScale()
+                        : { x: 1, y: 1, z: 1 };
+                    return {
+                        name: (b && b.name) || '',
+                        x: Number(eul.x) || 0,
+                        y: Number(eul.y) || 0,
+                        z: Number(eul.z) || 0,
+                        qx: Number(quat.x) || 0,
+                        qy: Number(quat.y) || 0,
+                        qz: Number(quat.z) || 0,
+                        qw: Number.isFinite(Number(quat.w)) ? Number(quat.w) : 1,
+                        px: Number(pos.x) || 0,
+                        py: Number(pos.y) || 0,
+                        pz: Number(pos.z) || 0,
+                        sx: Number.isFinite(Number(scl.x)) ? Number(scl.x) : 1,
+                        sy: Number.isFinite(Number(scl.y)) ? Number(scl.y) : 1,
+                        sz: Number.isFinite(Number(scl.z)) ? Number(scl.z) : 1
+                    };
+                });
+            }
+            entity._rigBones = result.bones;
+            result.bindPose = entity._bindPose;
+        }
+
+        return result;
+    }
+
+    window.collectRigFromEntity = collectRigFromEntity;
     window.VtfPcCompat = {
-        version: '1.0.0',
+        version: '1.1.0',
         toFloat32Safe: toFloat32Safe,
         toUint8Safe: toUint8Safe,
         buildSafeIndexArray: buildSafeIndexArray,
         computeNormalsSafe: computeNormalsSafe,
         setVertexStreamSafe: setVertexStreamSafe,
         updateMeshSafe: updateMeshSafe,
-        buildMeshCompat: buildMeshCompat
+        buildMeshCompat: buildMeshCompat,
+        collectRigFromEntity: collectRigFromEntity
     };
 })();
